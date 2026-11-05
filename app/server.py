@@ -368,8 +368,36 @@ class AddDemoProductRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
-async def index_page() -> FileResponse:
-    """Serves the Shopify Polaris Visual Collection Merchandiser UI."""
+async def index_page(
+    shop: Optional[str] = Query(default=None),
+    host: Optional[str] = Query(default=None),
+    embedded: Optional[str] = Query(default=None),
+) -> Any:
+    """Serves the Shopify Polaris Visual Collection Merchandiser UI with automatic OAuth initiation."""
+    if shop and shop.endswith(".myshopify.com") and shop != DEMO_SHOP:
+        session = get_shop_session(shop)
+        if not session or not session.get("access_token"):
+            auth_url = f"/auth?shop={urllib.parse.quote(shop)}"
+            # If embedded inside Shopify Admin iframe, break out to top window to authenticate
+            return HTMLResponse(
+                f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script>
+    var target = "{auth_url}";
+    if (window.top !== window.self) {{
+      window.top.location.href = target;
+    }} else {{
+      window.location.href = target;
+    }}
+  </script>
+</head>
+<body style="font-family:-apple-system,sans-serif;text-align:center;padding:40px;color:#202223;">
+  <p>Authenticating SortFlow with your Shopify store...</p>
+</body>
+</html>"""
+            )
     return FileResponse(STATIC_DIR / "index.html")
 
 
@@ -443,7 +471,7 @@ async def api_list_collections(
 ) -> Dict[str, Any]:
     """Lists collections for the connected Shopify store or Demo Sandbox."""
     session = get_shop_session(shop)
-    if shop == DEMO_SHOP or not session:
+    if shop == DEMO_SHOP:
         collections = list(DEMO_COLLECTIONS.values())
         demo_state = get_demo_products_state(session_id)
         for col in collections:
@@ -458,9 +486,15 @@ async def api_list_collections(
             "shop": shop,
             "mode": "demo_sandbox",
             "session_id": session_id,
-            "plan": session["plan_name"] if session else "pro",
+            "plan": "pro",
             "collections": collections,
         }
+
+    if not session or not session.get("access_token"):
+        raise HTTPException(
+            status_code=401,
+            detail={"error": "unauthorized", "auth_url": f"/auth?shop={shop}"},
+        )
 
     client = ShopifyGraphQLClient(shop, session["access_token"])
     collections = await client.list_collections(limit=50)
@@ -472,7 +506,7 @@ async def api_list_collections(
     return {
         "shop": shop,
         "mode": "live_shopify",
-        "plan": session["plan_name"],
+        "plan": session.get("plan_name", "pro"),
         "collections": collections,
     }
 
@@ -492,13 +526,18 @@ async def api_get_collection_products(
     stored_positions = get_product_positions(shop, collection_id)
     snapshot = get_latest_snapshot(shop, collection_id)
 
-    if shop == DEMO_SHOP or not session:
+    if shop == DEMO_SHOP:
         if collection_id not in DEMO_COLLECTIONS:
             raise HTTPException(status_code=404, detail="Collection not found in demo store")
         collection_meta = DEMO_COLLECTIONS[collection_id]
         demo_state = get_demo_products_state(session_id)
         raw_products = copy.deepcopy(demo_state.get(collection_id, []))
     else:
+        if not session or not session.get("access_token"):
+            raise HTTPException(
+                status_code=401,
+                detail={"error": "unauthorized", "auth_url": f"/auth?shop={shop}"},
+            )
         client = ShopifyGraphQLClient(shop, session["access_token"])
         raw_products = await client.fetch_collection_products(collection_id)
         collection_meta = {
@@ -551,7 +590,7 @@ async def api_save_collection_order(
     existing_snapshot = get_latest_snapshot(shop, collection_id)
 
     sort_order_fixed = False
-    if shop == DEMO_SHOP or not session:
+    if shop == DEMO_SHOP:
         if collection_id not in DEMO_COLLECTIONS:
             raise HTTPException(status_code=404, detail="Collection not found")
         demo_state = get_demo_products_state(session_id)
@@ -560,6 +599,11 @@ async def api_save_collection_order(
             DEMO_COLLECTIONS[collection_id]["sortOrder"] = "MANUAL"
             sort_order_fixed = True
     else:
+        if not session or not session.get("access_token"):
+            raise HTTPException(
+                status_code=401,
+                detail={"error": "unauthorized", "auth_url": f"/auth?shop={shop}"},
+            )
         client = ShopifyGraphQLClient(shop, session["access_token"])
         raw_products = await client.fetch_collection_products(collection_id)
         sort_order_fixed = await client.ensure_manual_sort_order(collection_id)

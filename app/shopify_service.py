@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
-API_VERSION = "2025-10"
+API_VERSION = "2025-01"
 
 
 def compute_final_order(
@@ -207,6 +207,15 @@ class ShopifyGraphQLClient:
                 status
                 totalInventory
                 tracksInventory
+                featuredImage {
+                  url
+                }
+                variants(first: 1) {
+                  nodes {
+                    price
+                    sku
+                  }
+                }
               }
             }
           }
@@ -219,6 +228,11 @@ class ShopifyGraphQLClient:
         for idx, n in enumerate(nodes):
             inv = int(n.get("totalInventory") or 0)
             tracks = bool(n.get("tracksInventory", True))
+            img_url = (n.get("featuredImage") or {}).get("url") or ""
+            var_nodes = (n.get("variants") or {}).get("nodes") or []
+            first_var = var_nodes[0] if var_nodes else {}
+            price = first_var.get("price") or ""
+            sku = first_var.get("sku") or ""
             result.append(
                 {
                     "product_id": n["id"].split("/")[-1],
@@ -229,6 +243,9 @@ class ShopifyGraphQLClient:
                     "total_inventory": inv,
                     "tracks_inventory": tracks,
                     "is_in_stock": (inv > 0) or (not tracks),
+                    "price": price,
+                    "sku": sku,
+                    "image_url": img_url,
                     "shopify_rank": idx + 1,
                 }
             )

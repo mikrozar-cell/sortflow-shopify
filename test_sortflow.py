@@ -175,7 +175,17 @@ def run_all_tests() -> None:
     assert r_good_hmac.status_code == 200
     assert r_good_hmac.json()["status"] == "gdpr_acknowledged"
 
-    print("ALL 7 TEST SUITES PASSED 100%!")
+    # 8. Test Live Store OAuth Redirection & 401 Guard (No demo fallback for live stores!)
+    r_live_root = client.get("/?shop=reviewer-test-store.myshopify.com")
+    assert r_live_root.status_code == 200
+    assert "Authenticating SortFlow with your Shopify store" in r_live_root.text
+    assert "/auth?shop=reviewer-test-store.myshopify.com" in r_live_root.text
+
+    r_live_api = client.get("/api/collections?shop=reviewer-test-store.myshopify.com")
+    assert r_live_api.status_code == 401
+    assert "unauthorized" in r_live_api.json()["detail"]["error"]
+
+    print("ALL 8 TEST SUITES PASSED 100%!")
 
 
 if __name__ == "__main__":

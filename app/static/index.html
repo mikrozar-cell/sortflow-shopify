@@ -688,6 +688,19 @@
     async function initApp() {
       setupGridDragListeners();
       const res = await authFetch(`/api/collections?shop=${encodeURIComponent(currentShop)}&session_id=${encodeURIComponent(currentSessionId)}`);
+      if (res.status === 401) {
+        let authUrl = `/auth?shop=${encodeURIComponent(currentShop)}`;
+        try {
+          const err = await res.json();
+          if (err.detail && err.detail.auth_url) authUrl = err.detail.auth_url;
+        } catch (_) {}
+        if (window.top !== window.self) {
+          window.top.location.href = authUrl;
+        } else {
+          window.location.href = authUrl;
+        }
+        return;
+      }
       const data = await res.json();
       collections = data.collections || [];
 
@@ -698,6 +711,24 @@
 
       const selectEl = document.getElementById("collectionSelect");
       selectEl.innerHTML = "";
+
+      if (collections.length === 0) {
+        selectEl.innerHTML = "<option value=''>No collections found in store</option>";
+        document.getElementById("productGrid").innerHTML = `
+          <div style="grid-column: 1 / -1; background: #fff; border: 1px solid #dde0e4; border-radius: 12px; padding: 48px 24px; text-align: center;">
+            <h3 style="font-size: 16px; margin-bottom: 8px;">No collections found in your Shopify store</h3>
+            <p style="color: #616568; font-size: 14px; max-width: 520px; margin: 0 auto 16px;">
+              SortFlow reads your live Shopify collections via the Admin GraphQL API. Create your first collection in Shopify Admin to start merchandising products.
+            </p>
+            <a href="https://${currentShop}/admin/collections/new" target="_top" class="btn btn--primary" style="display:inline-flex;text-decoration:none;font-weight:600;padding:8px 16px;border-radius:6px;background:#008060;color:#fff;">
+              + Create Collection in Shopify
+            </a>
+          </div>
+        `;
+        document.getElementById("saveOrderBtn").disabled = true;
+        return;
+      }
+
       collections.forEach((col) => {
         const opt = document.createElement("option");
         opt.value = col.id;
