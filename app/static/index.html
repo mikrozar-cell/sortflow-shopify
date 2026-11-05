@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="shopify-api-key" content="563899564d55907061ba45b85b8425b9" />
+  <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
   <title>SortFlow Pro — Visual Collection Merchandiser & Restock Memory</title>
   <style>
     :root {
@@ -668,9 +670,24 @@
     let draggedIndex = null;
     let currentDropSide = "before"; // 'before' or 'after'
 
+    async function authFetch(url, options = {}) {
+      options.headers = options.headers || {};
+      try {
+        if (window.shopify && typeof window.shopify.idToken === "function") {
+          const token = await window.shopify.idToken();
+          if (token) {
+            options.headers["Authorization"] = `Bearer ${token}`;
+          }
+        }
+      } catch (err) {
+        // Fallback for direct standalone browser sessions
+      }
+      return fetch(url, options);
+    }
+
     async function initApp() {
       setupGridDragListeners();
-      const res = await fetch(`/api/collections?shop=${encodeURIComponent(currentShop)}&session_id=${encodeURIComponent(currentSessionId)}`);
+      const res = await authFetch(`/api/collections?shop=${encodeURIComponent(currentShop)}&session_id=${encodeURIComponent(currentSessionId)}`);
       const data = await res.json();
       collections = data.collections || [];
 
@@ -702,7 +719,7 @@
     }
 
     async function loadCollectionProducts(collectionId) {
-      const res = await fetch(`/api/collections/${encodeURIComponent(collectionId)}/products?shop=${encodeURIComponent(currentShop)}&session_id=${encodeURIComponent(currentSessionId)}`);
+      const res = await authFetch(`/api/collections/${encodeURIComponent(collectionId)}/products?shop=${encodeURIComponent(currentShop)}&session_id=${encodeURIComponent(currentSessionId)}`);
       const data = await res.json();
 
       products = data.products || [];
@@ -1059,7 +1076,7 @@
         })),
       };
 
-      const res = await fetch(
+      const res = await authFetch(
         `/api/collections/${encodeURIComponent(currentCollectionId)}/save?shop=${encodeURIComponent(currentShop)}&session_id=${encodeURIComponent(currentSessionId)}`,
         {
           method: "POST",
@@ -1083,7 +1100,7 @@
     }
 
     async function restoreSnapshot() {
-      const res = await fetch(
+      const res = await authFetch(
         `/api/collections/${encodeURIComponent(currentCollectionId)}/restore-snapshot?shop=${encodeURIComponent(currentShop)}&session_id=${encodeURIComponent(currentSessionId)}`,
         { method: "POST" }
       );
@@ -1101,7 +1118,7 @@
     async function simulateStock(productId, newInventory) {
       await saveCollectionOrderSilent();
 
-      const res = await fetch(
+      const res = await authFetch(
         `/api/collections/${encodeURIComponent(currentCollectionId)}/simulate-stock?shop=${encodeURIComponent(currentShop)}&session_id=${encodeURIComponent(currentSessionId)}`,
         {
           method: "POST",
@@ -1127,7 +1144,7 @@
     async function simulateNewArrival() {
       await saveCollectionOrderSilent();
       const randNum = Math.floor(100 + Math.random() * 899);
-      const res = await fetch(
+      const res = await authFetch(
         `/api/collections/${encodeURIComponent(currentCollectionId)}/simulate-new-product?shop=${encodeURIComponent(currentShop)}&session_id=${encodeURIComponent(currentSessionId)}`,
         {
           method: "POST",
@@ -1167,7 +1184,7 @@
           is_pinned: Boolean(p.is_pinned),
         })),
       };
-      await fetch(
+      await authFetch(
         `/api/collections/${encodeURIComponent(currentCollectionId)}/save?shop=${encodeURIComponent(currentShop)}`,
         {
           method: "POST",
@@ -1178,7 +1195,7 @@
     }
 
     async function subscribeProPlan() {
-      const res = await fetch(`/api/billing/subscribe?shop=${encodeURIComponent(currentShop)}`, {
+      const res = await authFetch(`/api/billing/subscribe?shop=${encodeURIComponent(currentShop)}`, {
         method: "POST",
       });
       const data = await res.json();
