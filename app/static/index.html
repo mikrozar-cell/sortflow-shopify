@@ -896,12 +896,10 @@
 
     function recomputeLocalPreview() {
       const autoDemote = document.getElementById("autoDemoteToggle").checked;
-      if (autoDemote) {
-        const pinned = products.filter((p) => p.is_in_stock && p.is_pinned);
-        const regular = products.filter((p) => p.is_in_stock && !p.is_pinned);
-        const oos = products.filter((p) => !p.is_in_stock);
-        products = [...pinned, ...regular, ...oos];
-      }
+      const pinned = products.filter((p) => p.is_pinned && (!autoDemote || p.is_in_stock));
+      const regular = products.filter((p) => !p.is_pinned && (!autoDemote || p.is_in_stock));
+      const oos = autoDemote ? products.filter((p) => !p.is_in_stock) : [];
+      products = [...pinned, ...regular, ...oos];
       renderGrid();
     }
 
