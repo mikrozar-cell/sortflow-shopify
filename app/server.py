@@ -361,6 +361,18 @@ async def index_page() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy_page() -> FileResponse:
+    """Public Privacy Policy for Shopify App Store Listing."""
+    return FileResponse(STATIC_DIR / "privacy.html")
+
+
+@app.get("/support", response_class=HTMLResponse)
+async def support_page() -> FileResponse:
+    """Public Support page for Shopify App Store Listing."""
+    return FileResponse(STATIC_DIR / "support.html")
+
+
 # ---------------------------------------------------------------------------
 # Shopify OAuth 2.0 Flow
 # ---------------------------------------------------------------------------
