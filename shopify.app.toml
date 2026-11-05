@@ -1,0 +1,39 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "563899564d55907061ba45b85b8425b9"
+name = "SortFlow Collection Merchandiser"
+application_url = "https://your-domain.example.com"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = true
+
+[access_scopes]
+# Minimal scopes required for Built for Shopify approval:
+# read_products + write_products allows reading inventory & reordering collection products via GraphQL
+scopes = "read_products,write_products"
+
+[auth]
+redirect_urls = [
+  "https://your-domain.example.com/auth/callback",
+  "https://your-domain.example.com/api/auth/callback"
+]
+
+[webhooks]
+api_version = "2025-10"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled" ]
+  uri = "/webhooks/app_uninstalled"
+
+  [[webhooks.subscriptions]]
+  topics = [ "inventory_levels/update", "products/create", "products/update" ]
+  uri = "/webhooks/inventory_or_product"
+
+  [[webhooks.subscriptions]]
+  compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
+  uri = "/webhooks/gdpr"
+
+[pos]
+embedded = false
+

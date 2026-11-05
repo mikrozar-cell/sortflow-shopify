@@ -1,0 +1,1102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SortFlow Pro — Visual Collection Merchandiser & Restock Memory</title>
+  <style>
+    :root {
+      --p-bg: #f1f2f4;
+      --p-surface: #ffffff;
+      --p-surface-subdued: #f8f9fa;
+      --p-border: #dde0e4;
+      --p-text: #1a1c1d;
+      --p-text-subdued: #616568;
+      --p-primary: #008060;
+      --p-primary-hover: #006e52;
+      --p-critical: #d82c0d;
+      --p-critical-bg: #fff5f5;
+      --p-warning-bg: #fff8e6;
+      --p-warning-border: #eec200;
+      --p-info-bg: #eef6ff;
+      --p-info-border: #98c6cd;
+      --p-pinned-bg: #f6f3ff;
+      --p-pinned-border: #8c6ade;
+      --p-radius: 12px;
+      --p-shadow: 0 1px 3px rgba(0, 0, 0, 0.07);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "San Francisco", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    }
+
+    body {
+      background-color: var(--p-bg);
+      color: var(--p-text);
+      padding-bottom: 60px;
+    }
+
+    /* Top App Bar */
+    .topbar {
+      background: #1a1c1d;
+      color: #ffffff;
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid #303030;
+    }
+    .topbar__brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 700;
+      font-size: 16px;
+    }
+    .topbar__logo {
+      width: 30px;
+      height: 30px;
+      border-radius: 7px;
+      background: linear-gradient(135deg, #008060, #00b88a);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 15px;
+      color: #fff;
+    }
+    .topbar__badges {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+    }
+
+    /* Single-line crisp Polaris Badges */
+    .badge {
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1.2;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .badge--success {
+      background: #e3f1df;
+      color: #11622b;
+      border: 1px solid #bbe5b3;
+    }
+    .badge--warning {
+      background: #ffea8a;
+      color: #594400;
+    }
+    .badge--critical {
+      background: #ffe9e8;
+      color: #8e1f0b;
+      border: 1px solid #f8c2be;
+    }
+    .badge--pinned {
+      background: #ede7ff;
+      color: #4f2b93;
+      border: 1px solid #d0bfff;
+    }
+    .badge--dark {
+      background: #303336;
+      color: #e3e5e7;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      display: inline-block;
+      flex-shrink: 0;
+    }
+    .status-dot--success {
+      background: #008060;
+    }
+    .status-dot--critical {
+      background: #d82c0d;
+    }
+
+    .container {
+      max-width: 1280px;
+      margin: 22px auto;
+      padding: 0 20px;
+    }
+
+    /* Header Row */
+    .page-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+    .page-header__title h1 {
+      font-size: 22px;
+      font-weight: 700;
+    }
+    .page-header__title p {
+      font-size: 13.5px;
+      color: var(--p-text-subdued);
+      margin-top: 3px;
+    }
+    .page-header__actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* Buttons */
+    .btn {
+      border: 1px solid #babfc3;
+      background: #ffffff;
+      color: var(--p-text);
+      padding: 8px 14px;
+      border-radius: 7px;
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1.2;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      white-space: nowrap;
+      flex-shrink: 0;
+      transition: all 0.14s ease;
+    }
+    .btn:hover:not(:disabled) {
+      background: #f6f6f7;
+      border-color: #999ea4;
+    }
+    .btn:disabled {
+      opacity: 0.48;
+      cursor: not-allowed;
+    }
+    .btn--primary {
+      background: var(--p-primary);
+      border-color: var(--p-primary);
+      color: #ffffff;
+    }
+    .btn--primary:hover:not(:disabled) {
+      background: var(--p-primary-hover);
+      border-color: var(--p-primary-hover);
+    }
+    .btn--critical {
+      background: #fff4f4;
+      border-color: #e0b3b2;
+      color: var(--p-critical);
+    }
+    .btn--critical:hover:not(:disabled) {
+      background: #ffe8e8;
+      border-color: #d82c0d;
+    }
+    .btn--pinned-active {
+      background: #ede7ff;
+      border-color: #b79cfa;
+      color: #4f2b93;
+    }
+    .btn--pinned-active:hover:not(:disabled) {
+      background: #e2d8ff;
+      border-color: #8c6ade;
+    }
+    .btn--sm {
+      padding: 5px 10px;
+      font-size: 12px;
+      border-radius: 6px;
+    }
+
+    /* Cards & Controls */
+    .card {
+      background: var(--p-surface);
+      border: 1px solid var(--p-border);
+      border-radius: var(--p-radius);
+      box-shadow: var(--p-shadow);
+      padding: 18px 20px;
+      margin-bottom: 16px;
+    }
+
+    .controls-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+      gap: 16px;
+      align-items: center;
+    }
+
+    .field-group label {
+      display: block;
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--p-text-subdued);
+      margin-bottom: 6px;
+    }
+    .select-input {
+      width: 100%;
+      padding: 8px 11px;
+      border: 1px solid #babfc3;
+      border-radius: 7px;
+      font-size: 13.5px;
+      background: #fff;
+      color: var(--p-text);
+    }
+
+    .toggle-box {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: var(--p-surface-subdued);
+      border: 1px solid var(--p-border);
+      cursor: pointer;
+    }
+    .toggle-box input[type="checkbox"] {
+      margin-top: 3px;
+      width: 16px;
+      height: 16px;
+      accent-color: var(--p-primary);
+      cursor: pointer;
+    }
+    .toggle-box__title {
+      font-size: 13.5px;
+      font-weight: 600;
+    }
+    .toggle-box__desc {
+      font-size: 12px;
+      color: var(--p-text-subdued);
+      margin-top: 2px;
+    }
+
+    /* Banners */
+    .banner {
+      padding: 12px 16px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 13.5px;
+    }
+    .banner--warning {
+      background: var(--p-warning-bg);
+      border: 1px solid var(--p-warning-border);
+      color: #4f3b00;
+    }
+    .banner--success {
+      background: #e3f1df;
+      border: 1px solid #95c985;
+      color: #114f23;
+    }
+
+    /* Toolbar */
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 16px;
+      background: var(--p-surface);
+      border: 1px solid var(--p-border);
+      border-radius: var(--p-radius);
+      margin-bottom: 18px;
+    }
+    .toolbar__group {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Product Grid with Space for Drag-and-Drop Insertion Line */
+    .product-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+      gap: 18px;
+    }
+
+    .product-card {
+      background: var(--p-surface);
+      border: 1.5px solid var(--p-border);
+      border-radius: var(--p-radius);
+      padding: 14px 15px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 12px;
+      box-shadow: var(--p-shadow);
+      cursor: grab;
+      transition: transform 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+      position: relative;
+      user-select: none;
+    }
+    .product-card:hover {
+      border-color: #999ea4;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    }
+    .product-card:active {
+      cursor: grabbing;
+    }
+    .product-card.is-dragging {
+      opacity: 0.38;
+      transform: scale(0.97);
+      border: 2px dashed var(--p-primary);
+    }
+    .product-card.is-selected {
+      border-color: var(--p-primary);
+      background: #f4fbf8;
+    }
+    .product-card.is-pinned {
+      border-color: var(--p-pinned-border);
+      background: var(--p-pinned-bg);
+    }
+    .product-card.is-oos {
+      background: var(--p-critical-bg);
+      border-color: #f3c2c0;
+    }
+
+    /* Professional Dashed Drop Indicator Line Between Cards */
+    .product-card.drop-before::before,
+    .product-card.drop-after::after {
+      content: "";
+      position: absolute;
+      top: -6px;
+      bottom: -6px;
+      width: 0;
+      border-left: 3px dashed var(--p-primary);
+      z-index: 25;
+      pointer-events: none;
+      filter: drop-shadow(0 0 4px rgba(0, 128, 96, 0.45));
+    }
+    .product-card.drop-before::before {
+      left: -11px;
+    }
+    .product-card.drop-after::after {
+      right: -11px;
+    }
+
+    /* Top & Bottom circles on the dashed insertion line */
+    .product-card.drop-before {
+      transform: translateX(4px);
+    }
+    .product-card.drop-after {
+      transform: translateX(-4px);
+    }
+
+    .drop-pill-indicator {
+      display: none;
+      position: absolute;
+      top: -12px;
+      background: var(--p-primary);
+      color: #ffffff;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 999px;
+      white-space: nowrap;
+      z-index: 30;
+      box-shadow: 0 2px 6px rgba(0, 128, 96, 0.35);
+      pointer-events: none;
+    }
+    .product-card.drop-before .drop-pill-indicator {
+      display: inline-block;
+      left: -26px;
+    }
+    .product-card.drop-after .drop-pill-indicator {
+      display: inline-block;
+      right: -26px;
+    }
+
+    /* Card Top Bar */
+    .product-card__top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-height: 28px;
+    }
+    .product-card__rank-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    .product-card__rank-wrap input[type="checkbox"] {
+      width: 15px;
+      height: 15px;
+      accent-color: var(--p-primary);
+      cursor: pointer;
+    }
+    .rank-pill {
+      background: #1a1c1d;
+      color: #fff;
+      font-weight: 700;
+      font-size: 12px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+    .rank-jump-input {
+      width: 44px;
+      padding: 3px 4px;
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid #babfc3;
+      border-radius: 6px;
+      text-align: center;
+      background: #fff;
+    }
+    .product-card__pin-area {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    /* Card Body */
+    .product-card__body {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    .product-thumb {
+      width: 52px;
+      height: 52px;
+      border-radius: 10px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-weight: 800;
+      font-size: 15px;
+      letter-spacing: 0.5px;
+      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+    }
+    .product-info {
+      flex: 1;
+      min-width: 0;
+    }
+    .product-title {
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 1.32;
+      margin-bottom: 4px;
+      color: var(--p-text);
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .product-meta {
+      font-size: 12px;
+      color: var(--p-text-subdued);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+    }
+
+    .memory-callout {
+      margin-top: 6px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11.5px;
+      font-weight: 600;
+      color: #8e1f0b;
+      background: #ffe5e3;
+      border: 1px solid #f5b9b5;
+      padding: 2px 8px;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+
+    /* Card Footer */
+    .product-card__footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-top: 10px;
+      border-top: 1px solid rgba(0, 0, 0, 0.07);
+      gap: 8px;
+      flex-wrap: nowrap;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: #1a1c1d;
+      color: #fff;
+      padding: 12px 18px;
+      border-radius: 8px;
+      font-size: 13.5px;
+      font-weight: 600;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+      z-index: 9999;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Bar -->
+  <header class="topbar">
+    <div class="topbar__brand">
+      <span class="topbar__logo">SF</span>
+      <span>SortFlow Pro — Visual Collection Merchandiser</span>
+    </div>
+    <div class="topbar__badges">
+      <span id="modeBadge" class="badge badge--dark">Sandbox Mode</span>
+      <span id="sortOrderBadge" class="badge badge--warning">Shopify Sort: BEST_SELLING</span>
+      <button class="btn btn--sm" onclick="subscribeProPlan()">⚡ Pro Unlimited ($9.99/mo)</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Page Header -->
+    <div class="page-header">
+      <div class="page-header__title">
+        <h1>Collection Visual Merchandising & Out-of-Stock Demoter</h1>
+        <p>Drag & drop products with live drop-line preview, pin hero items, auto-demote sold-out items, and restore their exact rank on restock.</p>
+      </div>
+      <div class="page-header__actions">
+        <button id="undoSnapshotBtn" class="btn btn--critical" onclick="restoreSnapshot()" disabled>
+          ↺ 1-Click Undo (Restore Original Order)
+        </button>
+        <button id="saveBtn" class="btn btn--primary" onclick="saveCollectionOrder()">
+          ✓ Save & Sync to Shopify
+        </button>
+      </div>
+    </div>
+
+    <!-- Auto-Switch Warning Banner if collection is not MANUAL -->
+    <div id="nonManualBanner" class="banner banner--warning" style="display: none;">
+      <div>
+        <strong>⚠️ Why other sorting apps fail silently:</strong> This collection is currently set to
+        <code id="currentSortOrderCode">BEST_SELLING</code> in Shopify Admin. When you click
+        <strong>Save & Sync to Shopify</strong>, SortFlow Pro will automatically switch it to
+        <code>MANUAL</code> so your custom visual order immediately appears on the storefront!
+      </div>
+    </div>
+
+    <!-- Status Notification Banner -->
+    <div id="statusBanner" class="banner banner--success" style="display: none;"></div>
+
+    <!-- Collection & Rules Card -->
+    <section class="card">
+      <div class="controls-grid">
+        <div class="field-group">
+          <label for="collectionSelect">Select Shopify Collection</label>
+          <select id="collectionSelect" class="select-input" onchange="onCollectionChange()"></select>
+        </div>
+
+        <label class="toggle-box">
+          <input type="checkbox" id="autoDemoteToggle" checked onchange="onRuleChange()" />
+          <div>
+            <div class="toggle-box__title">Auto-Demote Out-of-Stock</div>
+            <div class="toggle-box__desc">Pushes 0-inventory products to the bottom automatically</div>
+          </div>
+        </label>
+
+        <label class="toggle-box">
+          <input type="checkbox" id="restoreOnRestockToggle" checked onchange="onRuleChange()" />
+          <div>
+            <div class="toggle-box__title">Restock Memory™</div>
+            <div class="toggle-box__desc">Restores original rank when a sold-out item is restocked</div>
+          </div>
+        </label>
+
+        <div class="field-group">
+          <label for="newProductsPosSelect">New Arrivals Placement (`products/create`)</label>
+          <select id="newProductsPosSelect" class="select-input" onchange="onRuleChange()">
+            <option value="after_pinned">Right After Pinned Items (Recommended)</option>
+            <option value="top">Top of Collection (#1)</option>
+            <option value="bottom">Above Out-of-Stock Items</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
+    <!-- Action Toolbar & Live Webhook Simulator -->
+    <section class="toolbar">
+      <div class="toolbar__group">
+        <button class="btn btn--sm" onclick="selectAllProducts(true)">Select All</button>
+        <button class="btn btn--sm" onclick="selectAllProducts(false)">Clear Selection</button>
+        <button class="btn btn--sm" onclick="moveSelected('top')">↑ Move Selected to Top</button>
+        <button class="btn btn--sm" onclick="moveSelected('bottom')">↓ Move Selected to Bottom</button>
+      </div>
+      <div class="toolbar__group">
+        <span style="font-size: 12px; color: var(--p-text-subdued); font-weight: 600;">Webhook Sandbox:</span>
+        <button class="btn btn--sm" onclick="simulateNewArrival()">
+          + Simulate New Product Webhook
+        </button>
+      </div>
+    </section>
+
+    <!-- Visual Product Grid -->
+    <section id="productGrid" class="product-grid"></section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const urlParams = new URLSearchParams(window.location.search);
+    const currentShop = urlParams.get("shop") || "demo-store.myshopify.com";
+
+    let collections = [];
+    let currentCollectionId = null;
+    let products = [];
+    let selectedIds = new Set();
+    let draggedIndex = null;
+    let currentDropSide = "before"; // 'before' or 'after'
+
+    async function initApp() {
+      const res = await fetch(`/api/collections?shop=${encodeURIComponent(currentShop)}`);
+      const data = await res.json();
+      collections = data.collections || [];
+
+      const modeBadge = document.getElementById("modeBadge");
+      modeBadge.textContent = data.mode === "demo_sandbox"
+        ? `Sandbox: ${data.shop}`
+        : `Connected: ${data.shop}`;
+
+      const selectEl = document.getElementById("collectionSelect");
+      selectEl.innerHTML = "";
+      collections.forEach((col) => {
+        const opt = document.createElement("option");
+        opt.value = col.id;
+        opt.textContent = `${col.title} (${col.productsCount} products)`;
+        selectEl.appendChild(opt);
+      });
+
+      if (collections.length > 0) {
+        currentCollectionId = collections[0].id;
+        await loadCollectionProducts(currentCollectionId);
+      }
+    }
+
+    async function onCollectionChange() {
+      const selectEl = document.getElementById("collectionSelect");
+      currentCollectionId = selectEl.value;
+      selectedIds.clear();
+      await loadCollectionProducts(currentCollectionId);
+    }
+
+    async function loadCollectionProducts(collectionId) {
+      const res = await fetch(`/api/collections/${encodeURIComponent(collectionId)}/products?shop=${encodeURIComponent(currentShop)}`);
+      const data = await res.json();
+
+      products = data.products || [];
+      document.getElementById("autoDemoteToggle").checked = Boolean(data.rule.auto_demote_oos);
+      document.getElementById("restoreOnRestockToggle").checked = Boolean(data.rule.restore_on_restock);
+      document.getElementById("newProductsPosSelect").value = data.rule.new_products_position || "after_pinned";
+
+      // Update sortOrder badge & warning banner
+      const sortOrder = (data.collection && data.collection.sortOrder) || "MANUAL";
+      const badgeEl = document.getElementById("sortOrderBadge");
+      const bannerEl = document.getElementById("nonManualBanner");
+      badgeEl.textContent = `Shopify Sort: ${sortOrder}`;
+      if (sortOrder !== "MANUAL") {
+        badgeEl.className = "badge badge--warning";
+        document.getElementById("currentSortOrderCode").textContent = sortOrder;
+        bannerEl.style.display = "flex";
+      } else {
+        badgeEl.className = "badge badge--success";
+        bannerEl.style.display = "none";
+      }
+
+      // Snapshot Undo button
+      const undoBtn = document.getElementById("undoSnapshotBtn");
+      undoBtn.disabled = !data.has_snapshot;
+
+      renderGrid();
+    }
+
+    function clearAllDropIndicators() {
+      document.querySelectorAll(".product-card").forEach((el) => {
+        el.classList.remove("drop-before", "drop-after");
+      });
+    }
+
+    function renderGrid() {
+      const grid = document.getElementById("productGrid");
+      grid.innerHTML = "";
+
+      products.forEach((prod, idx) => {
+        const card = document.createElement("div");
+        const isSelected = selectedIds.has(prod.product_id);
+        const isPinned = Boolean(prod.is_pinned);
+        const isOos = !prod.is_in_stock;
+
+        card.className = [
+          "product-card",
+          isSelected ? "is-selected" : "",
+          isPinned ? "is-pinned" : "",
+          isOos ? "is-oos" : "",
+        ].filter(Boolean).join(" ");
+
+        card.draggable = true;
+        card.dataset.index = idx;
+
+        card.addEventListener("dragstart", (e) => {
+          draggedIndex = idx;
+          card.classList.add("is-dragging");
+          e.dataTransfer.effectAllowed = "move";
+        });
+
+        card.addEventListener("dragend", () => {
+          card.classList.remove("is-dragging");
+          clearAllDropIndicators();
+          draggedIndex = null;
+        });
+
+        card.addEventListener("dragover", (e) => {
+          e.preventDefault();
+          if (draggedIndex === null || draggedIndex === idx) {
+            card.classList.remove("drop-before", "drop-after");
+            return;
+          }
+          e.dataTransfer.dropEffect = "move";
+
+          const rect = card.getBoundingClientRect();
+          const midpoint = rect.left + rect.width / 2;
+          const side = e.clientX < midpoint ? "before" : "after";
+          currentDropSide = side;
+
+          clearAllDropIndicators();
+          card.classList.add(side === "before" ? "drop-before" : "drop-after");
+          const pill = card.querySelector(".drop-pill-indicator");
+          if (pill) {
+            const targetRank = side === "before" ? idx + 1 : idx + 2;
+            pill.textContent = `Insert #${Math.min(targetRank, products.length)}`;
+          }
+        });
+
+        card.addEventListener("dragleave", (e) => {
+          if (!card.contains(e.relatedTarget)) {
+            card.classList.remove("drop-before", "drop-after");
+          }
+        });
+
+        card.addEventListener("drop", (e) => {
+          e.preventDefault();
+          clearAllDropIndicators();
+          if (draggedIndex === null || draggedIndex === idx) return;
+
+          const moved = products.splice(draggedIndex, 1)[0];
+          let insertIndex = idx;
+          if (draggedIndex < idx) {
+            insertIndex = currentDropSide === "after" ? idx : idx - 1;
+          } else {
+            insertIndex = currentDropSide === "after" ? idx + 1 : idx;
+          }
+          insertIndex = Math.max(0, Math.min(products.length, insertIndex));
+          products.splice(insertIndex, 0, moved);
+          recomputeLocalPreview();
+        });
+
+        const initials = prod.title
+          .split(" ")
+          .slice(0, 2)
+          .map((w) => w[0])
+          .join("")
+          .toUpperCase();
+
+        // Single-line crisp stock status badge with status dot
+        const stockBadge = prod.is_in_stock
+          ? `<span class="badge badge--success">
+               <span class="status-dot status-dot--success"></span>
+               In Stock (${prod.total_inventory})
+             </span>`
+          : `<span class="badge badge--critical">
+               <span class="status-dot status-dot--critical"></span>
+               Sold Out · Demoted
+             </span>`;
+
+        // Single-line Pin button / status that never wraps
+        const pinControl = isPinned
+          ? `<span class="badge badge--pinned">📌 Pinned</span>
+             <button class="btn btn--sm btn--pinned-active" onclick="togglePin(${idx})" title="Unpin product">
+               Unpin
+             </button>`
+          : `<button class="btn btn--sm" onclick="togglePin(${idx})" title="Pin product to top of collection">
+               📌 Pin
+             </button>`;
+
+        const memoryNote = (!prod.is_in_stock && prod.saved_in_stock_position)
+          ? `<div class="memory-callout">
+               🧠 Restock Memory: Rank #${Math.round(prod.saved_in_stock_position / 10)}
+             </div>`
+          : "";
+
+        card.innerHTML = `
+          <span class="drop-pill-indicator">Insert Here</span>
+
+          <div class="product-card__top">
+            <div class="product-card__rank-wrap">
+              <input type="checkbox" ${isSelected ? "checked" : ""} onchange="toggleSelect('${prod.product_id}', this.checked)" />
+              <span class="rank-pill">#${idx + 1}</span>
+              <input
+                type="number"
+                min="1"
+                max="${products.length}"
+                value="${idx + 1}"
+                class="rank-jump-input"
+                title="Type target rank and press Enter"
+                onchange="jumpToPosition(${idx}, this.value)"
+              />
+            </div>
+            <div class="product-card__pin-area">
+              ${pinControl}
+            </div>
+          </div>
+
+          <div class="product-card__body">
+            <div class="product-thumb" style="background:${prod.badge_color || '#008060'}">${initials}</div>
+            <div class="product-info">
+              <div class="product-title">${prod.title}</div>
+              <div class="product-meta">
+                <span>SKU: <strong>${prod.sku || 'N/A'}</strong></span>
+                <span>€${prod.price || '0.00'}</span>
+              </div>
+              ${memoryNote}
+            </div>
+          </div>
+
+          <div class="product-card__footer">
+            ${stockBadge}
+            ${
+              prod.is_in_stock
+                ? `<button class="btn btn--sm btn--critical" onclick="simulateStock('${prod.product_id}', 0)">
+                     Sell Out (0)
+                   </button>`
+                : `<button class="btn btn--sm btn--primary" onclick="simulateStock('${prod.product_id}', 25)">
+                     Restock (+25)
+                   </button>`
+            }
+          </div>
+        `;
+
+        grid.appendChild(card);
+      });
+    }
+
+    function recomputeLocalPreview() {
+      const autoDemote = document.getElementById("autoDemoteToggle").checked;
+      if (autoDemote) {
+        const pinned = products.filter((p) => p.is_in_stock && p.is_pinned);
+        const regular = products.filter((p) => p.is_in_stock && !p.is_pinned);
+        const oos = products.filter((p) => !p.is_in_stock);
+        products = [...pinned, ...regular, ...oos];
+      }
+      renderGrid();
+    }
+
+    function onRuleChange() {
+      recomputeLocalPreview();
+    }
+
+    function toggleSelect(productId, checked) {
+      if (checked) selectedIds.add(productId);
+      else selectedIds.delete(productId);
+      renderGrid();
+    }
+
+    function selectAllProducts(selectAll) {
+      selectedIds.clear();
+      if (selectAll) {
+        products.forEach((p) => selectedIds.add(p.product_id));
+      }
+      renderGrid();
+    }
+
+    function moveSelected(direction) {
+      if (selectedIds.size === 0) {
+        showToast("Select at least one product first");
+        return;
+      }
+      const chosen = products.filter((p) => selectedIds.has(p.product_id));
+      const rest = products.filter((p) => !selectedIds.has(p.product_id));
+      products = direction === "top" ? [...chosen, ...rest] : [...rest, ...chosen];
+      recomputeLocalPreview();
+      showToast(`Moved ${chosen.length} selected product(s) to ${direction}`);
+    }
+
+    function togglePin(index) {
+      products[index].is_pinned = !products[index].is_pinned;
+      recomputeLocalPreview();
+    }
+
+    function jumpToPosition(fromIndex, targetValue) {
+      let targetIdx = parseInt(targetValue, 10) - 1;
+      if (isNaN(targetIdx)) return;
+      targetIdx = Math.max(0, Math.min(products.length - 1, targetIdx));
+      if (targetIdx === fromIndex) return;
+      const item = products.splice(fromIndex, 1)[0];
+      products.splice(targetIdx, 0, item);
+      recomputeLocalPreview();
+    }
+
+    async function saveCollectionOrder() {
+      const payload = {
+        auto_demote_oos: document.getElementById("autoDemoteToggle").checked,
+        restore_on_restock: document.getElementById("restoreOnRestockToggle").checked,
+        new_products_position: document.getElementById("newProductsPosSelect").value,
+        items: products.map((p, idx) => ({
+          product_id: p.product_id,
+          position: (idx + 1) * 10,
+          is_pinned: Boolean(p.is_pinned),
+        })),
+      };
+
+      const res = await fetch(
+        `/api/collections/${encodeURIComponent(currentCollectionId)}/save?shop=${encodeURIComponent(currentShop)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      );
+      const data = await res.json();
+      products = data.products || products;
+
+      if (data.sort_order_switched_to_manual) {
+        showStatusBanner(
+          "✓ Saved! SortFlow Pro automatically switched collection sortOrder from BEST_SELLING to MANUAL and synced all product positions."
+        );
+      } else {
+        showStatusBanner("✓ Collection order and Restock Memory rules saved & synced to Shopify!");
+      }
+
+      await loadCollectionProducts(currentCollectionId);
+      showToast("Saved & synced to Shopify!");
+    }
+
+    async function restoreSnapshot() {
+      const res = await fetch(
+        `/api/collections/${encodeURIComponent(currentCollectionId)}/restore-snapshot?shop=${encodeURIComponent(currentShop)}`,
+        { method: "POST" }
+      );
+      if (!res.ok) {
+        showToast("No snapshot available yet");
+        return;
+      }
+      const data = await res.json();
+      products = data.products || [];
+      showStatusBanner(`↺ 1-Click Undo Complete: Restored original collection order from snapshot (${data.restored_from}).`);
+      await loadCollectionProducts(currentCollectionId);
+      showToast("Original order restored!");
+    }
+
+    async function simulateStock(productId, newInventory) {
+      await saveCollectionOrderSilent();
+
+      const res = await fetch(
+        `/api/collections/${encodeURIComponent(currentCollectionId)}/simulate-stock?shop=${encodeURIComponent(currentShop)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ product_id: productId, new_inventory: newInventory }),
+        }
+      );
+      const data = await res.json();
+      products = data.products || [];
+      renderGrid();
+
+      if (newInventory === 0) {
+        showStatusBanner(
+          `📉 Simulated 'inventory_levels/update' (0 stock): Product automatically demoted to the bottom while saving its original rank in Restock Memory™.`
+        );
+      } else {
+        showStatusBanner(
+          `📈 Simulated 'inventory_levels/update' (+${newInventory} restocked): Restock Memory™ automatically restored the product to its exact pre-OOS rank!`
+        );
+      }
+    }
+
+    async function simulateNewArrival() {
+      await saveCollectionOrderSilent();
+      const randNum = Math.floor(100 + Math.random() * 899);
+      const res = await fetch(
+        `/api/collections/${encodeURIComponent(currentCollectionId)}/simulate-new-product?shop=${encodeURIComponent(currentShop)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: `Limited Resort Linen Blazer #${randNum}`,
+            sku: `LR-BLZ-${randNum}`,
+            price: "159.00",
+            inventory: 35,
+          }),
+        }
+      );
+      const data = await res.json();
+      products = data.products || [];
+      renderGrid();
+      showStatusBanner(
+        `✨ Simulated 'products/create' webhook: New arrival placed according to your rule (${document.getElementById("newProductsPosSelect").value}) — never buried below sold-out items!`
+      );
+    }
+
+    async function saveCollectionOrderSilent() {
+      const payload = {
+        auto_demote_oos: document.getElementById("autoDemoteToggle").checked,
+        restore_on_restock: document.getElementById("restoreOnRestockToggle").checked,
+        new_products_position: document.getElementById("newProductsPosSelect").value,
+        items: products.map((p, idx) => ({
+          product_id: p.product_id,
+          position: (idx + 1) * 10,
+          is_pinned: Boolean(p.is_pinned),
+        })),
+      };
+      await fetch(
+        `/api/collections/${encodeURIComponent(currentCollectionId)}/save?shop=${encodeURIComponent(currentShop)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      );
+    }
+
+    async function subscribeProPlan() {
+      const res = await fetch(`/api/billing/subscribe?shop=${encodeURIComponent(currentShop)}`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      showStatusBanner(`💳 Shopify Billing API ready: ${data.plan || "SortFlow Pro ($9.99/mo, 14-day free trial)"}`);
+      showToast("Billing API check succeeded");
+    }
+
+    function showStatusBanner(msg) {
+      const el = document.getElementById("statusBanner");
+      el.textContent = msg;
+      el.style.display = "flex";
+    }
+
+    function showToast(msg) {
+      const t = document.getElementById("toast");
+      t.textContent = msg;
+      t.style.display = "block";
+      setTimeout(() => {
+        t.style.display = "none";
+      }, 2800);
+    }
+
+    initApp();
+  </script>
+</body>
+</html>
