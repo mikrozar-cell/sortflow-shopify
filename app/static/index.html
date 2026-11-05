@@ -1138,6 +1138,14 @@
       const data = await res.json();
       products = data.products || [];
       renderGrid();
+
+      // Dynamically update the count in the dropdown option immediately
+      const currentOpt = document.querySelector(`#collectionSelect option[value="${currentCollectionId}"]`);
+      if (currentOpt) {
+        const titleWithoutCount = currentOpt.textContent.replace(/\s*\(\d+\s*products\)/, "");
+        currentOpt.textContent = `${titleWithoutCount} (${products.length} products)`;
+      }
+
       showStatusBanner(
         `✨ Simulated 'products/create' webhook: New arrival placed according to your rule (${document.getElementById("newProductsPosSelect").value}) — never buried below sold-out items!`
       );
