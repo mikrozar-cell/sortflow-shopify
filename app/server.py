@@ -561,13 +561,15 @@ async def api_save_collection_order(
         raw_products = await client.fetch_collection_products(collection_id)
         sort_order_fixed = await client.ensure_manual_sort_order(collection_id)
 
-    # Always save a snapshot of the current state right before applying new user order,
-    # so clicking "Undo" always restores the state from just before the changes!
-    current_snapshot_ids = [p["product_id"] for p in raw_products]
+    # Always save a full snapshot of (product_id, is_pinned) before applying changes
+    current_snapshot = [
+        {"product_id": p["product_id"], "is_pinned": bool(p.get("is_pinned", False))}
+        for p in raw_products
+    ]
     save_collection_snapshot(
         shop_domain=shop,
         collection_id=collection_id,
-        snapshot_ids=current_snapshot_ids,
+        snapshot_ids=current_snapshot,
         note="Pre-change snapshot",
     )
 
@@ -637,18 +639,28 @@ async def api_restore_snapshot(
     if not snapshot:
         raise HTTPException(status_code=404, detail="No snapshot found for this collection")
 
-    snapshot_ids: List[str] = snapshot["snapshot"]
+    raw_snapshot_items = snapshot["snapshot"]
+    # Handle both old format [pid, pid] and new format [{"product_id": pid, "is_pinned": bool}]
+    snapshot_items: List[Dict[str, Any]] = []
+    for item in raw_snapshot_items:
+        if isinstance(item, dict):
+            snapshot_items.append(item)
+        else:
+            snapshot_items.append({"product_id": str(item), "is_pinned": False})
+
+    snapshot_ids: List[str] = [i["product_id"] for i in snapshot_items]
     session = get_shop_session(shop)
 
     if shop == DEMO_SHOP or not session:
         demo_state = get_demo_products_state(session_id)
         current_items = {p["product_id"]: p for p in demo_state.get(collection_id, [])}
         restored_list: List[Dict[str, Any]] = []
-        for rank_idx, pid in enumerate(snapshot_ids):
+        for rank_idx, snap in enumerate(snapshot_items):
+            pid = snap["product_id"]
             if pid in current_items:
                 item = copy.deepcopy(current_items[pid])
                 item["effective_rank"] = rank_idx + 1
-                item["is_pinned"] = False
+                item["is_pinned"] = bool(snap.get("is_pinned", False))
                 restored_list.append(item)
         # Include any newly added products not in the original snapshot at the end
         for pid, item in current_items.items():
@@ -666,13 +678,13 @@ async def api_restore_snapshot(
     # Reset stored positions to match snapshot order
     records = [
         {
-            "product_id": pid,
+            "product_id": snap["product_id"],
             "manual_position": (idx + 1) * 10,
             "saved_in_stock_position": (idx + 1) * 10,
-            "is_pinned": False,
+            "is_pinned": bool(snap.get("is_pinned", False)),
             "is_out_of_stock": False,
         }
-        for idx, pid in enumerate(snapshot_ids)
+        for idx, snap in enumerate(snapshot_items)
     ]
     save_product_positions_batch(shop, collection_id, records)
     upsert_collection_rule(
