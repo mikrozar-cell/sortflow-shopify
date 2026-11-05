@@ -527,33 +527,28 @@ async def api_save_collection_order(
     existing_positions = get_product_positions(shop, collection_id)
     existing_snapshot = get_latest_snapshot(shop, collection_id)
 
+    sort_order_fixed = False
     if shop == DEMO_SHOP or not session:
         if collection_id not in DEMO_COLLECTIONS:
             raise HTTPException(status_code=404, detail="Collection not found")
         raw_products = DEMO_PRODUCTS_STATE[collection_id]
-        # Save initial snapshot before our first reorder so merchant can Undo anytime
-        if not existing_snapshot:
-            save_collection_snapshot(
-                shop_domain=shop,
-                collection_id=collection_id,
-                snapshot_ids=[p["product_id"] for p in raw_products],
-                note="Initial order before SortFlow Pro changes",
-            )
-        sort_order_fixed = False
         if DEMO_COLLECTIONS[collection_id]["sortOrder"] != "MANUAL":
             DEMO_COLLECTIONS[collection_id]["sortOrder"] = "MANUAL"
             sort_order_fixed = True
     else:
         client = ShopifyGraphQLClient(shop, session["access_token"])
         raw_products = await client.fetch_collection_products(collection_id)
-        if not existing_snapshot:
-            save_collection_snapshot(
-                shop_domain=shop,
-                collection_id=collection_id,
-                snapshot_ids=[p["product_id"] for p in raw_products],
-                note="Initial Shopify order before SortFlow Pro changes",
-            )
         sort_order_fixed = await client.ensure_manual_sort_order(collection_id)
+
+    # Always save a snapshot of the current state right before applying new user order,
+    # so clicking "Undo" always restores the state from just before the changes!
+    current_snapshot_ids = [p["product_id"] for p in raw_products]
+    save_collection_snapshot(
+        shop_domain=shop,
+        collection_id=collection_id,
+        snapshot_ids=current_snapshot_ids,
+        note="Pre-change snapshot",
+    )
 
     # Merge user-submitted visual ranks with existing Restock Memory metadata
     user_positions_map: Dict[str, Dict[str, Any]] = {}
