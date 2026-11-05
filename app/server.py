@@ -561,11 +561,18 @@ async def api_save_collection_order(
         raw_products = await client.fetch_collection_products(collection_id)
         sort_order_fixed = await client.ensure_manual_sort_order(collection_id)
 
-    # Always save a full snapshot of (product_id, is_pinned) before applying changes
-    current_snapshot = [
-        {"product_id": p["product_id"], "is_pinned": bool(p.get("is_pinned", False))}
-        for p in raw_products
-    ]
+    # Always save a full snapshot of (product_id, is_pinned) and collection rules before applying changes
+    current_snapshot = {
+        "items": [
+            {"product_id": p["product_id"], "is_pinned": bool(p.get("is_pinned", False))}
+            for p in raw_products
+        ],
+        "rules": {
+            "auto_demote_oos": bool(payload.auto_demote_oos),
+            "restore_on_restock": bool(payload.restore_on_restock),
+            "new_products_position": payload.new_products_position,
+        },
+    }
     save_collection_snapshot(
         shop_domain=shop,
         collection_id=collection_id,
@@ -639,8 +646,17 @@ async def api_restore_snapshot(
     if not snapshot:
         raise HTTPException(status_code=404, detail="No snapshot found for this collection")
 
-    raw_snapshot_items = snapshot["snapshot"]
-    # Handle both old format [pid, pid] and new format [{"product_id": pid, "is_pinned": bool}]
+    raw_snapshot = snapshot["snapshot"]
+    snapshot_rules: Dict[str, Any] = {}
+    if isinstance(raw_snapshot, dict) and "items" in raw_snapshot:
+        raw_snapshot_items = raw_snapshot.get("items", [])
+        snapshot_rules = raw_snapshot.get("rules", {})
+    elif isinstance(raw_snapshot, list):
+        raw_snapshot_items = raw_snapshot
+    else:
+        raw_snapshot_items = []
+
+    # Handle old format [pid, pid], dict format, etc.
     snapshot_items: List[Dict[str, Any]] = []
     for item in raw_snapshot_items:
         if isinstance(item, dict):
@@ -676,29 +692,42 @@ async def api_restore_snapshot(
         restored_list = await client.fetch_collection_products(collection_id)
 
     # Reset stored positions to match snapshot order
+    existing_positions = get_product_positions(shop, collection_id)
     records = [
         {
             "product_id": snap["product_id"],
             "manual_position": (idx + 1) * 10,
             "saved_in_stock_position": (idx + 1) * 10,
             "is_pinned": bool(snap.get("is_pinned", False)),
-            "is_out_of_stock": False,
+            "is_out_of_stock": existing_positions.get(snap["product_id"], {}).get("is_out_of_stock", False),
         }
         for idx, snap in enumerate(snapshot_items)
     ]
     save_product_positions_batch(shop, collection_id, records)
+
+    # Preserve or restore collection rule preferences instead of hardcoding auto_demote_oos=False
+    current_rule = get_collection_rule(shop, collection_id)
+    restored_auto_demote = snapshot_rules.get("auto_demote_oos", current_rule.get("auto_demote_oos", True))
+    restored_restore_on_restock = snapshot_rules.get("restore_on_restock", current_rule.get("restore_on_restock", True))
+    restored_new_pos = snapshot_rules.get("new_products_position", current_rule.get("new_products_position", "after_pinned"))
+
     upsert_collection_rule(
         shop_domain=shop,
         collection_id=collection_id,
-        auto_demote_oos=False,
-        restore_on_restock=True,
-        new_products_position="after_pinned",
+        auto_demote_oos=bool(restored_auto_demote),
+        restore_on_restock=bool(restored_restore_on_restock),
+        new_products_position=str(restored_new_pos),
     )
 
     return {
         "status": "restored",
         "restored_from": snapshot["created_at"],
         "products": restored_list,
+        "rule": {
+            "auto_demote_oos": bool(restored_auto_demote),
+            "restore_on_restock": bool(restored_restore_on_restock),
+            "new_products_position": str(restored_new_pos),
+        },
     }
 
 

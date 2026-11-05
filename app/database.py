@@ -235,7 +235,7 @@ def save_product_positions_batch(
 def save_collection_snapshot(
     shop_domain: str,
     collection_id: str,
-    snapshot_ids: List[str],
+    snapshot_ids: Any,
     note: str = "Pre-sort snapshot",
 ) -> int:
     now = _now_iso()

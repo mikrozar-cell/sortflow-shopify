@@ -26,7 +26,7 @@ if TEMP_DB.exists():
 os.environ["SORTFLOW_DB_PATH"] = str(TEMP_DB)
 
 from fastapi.testclient import TestClient
-from app.database import init_db
+from app.database import get_collection_rule, init_db
 from app.server import SHOPIFY_API_SECRET, app, reset_demo_state
 
 
@@ -139,9 +139,14 @@ def run_all_tests() -> None:
         "/api/collections/col_summer_2026/restore-snapshot?shop=demo-store.myshopify.com"
     )
     assert r_undo.status_code == 200
-    restored = r_undo.json()["products"]
+    undo_data = r_undo.json()
+    restored = undo_data["products"]
     assert restored[0]["product_id"] == "prod_101"
     assert restored[1]["product_id"] == "prod_102"
+    assert undo_data["rule"]["auto_demote_oos"] is True
+
+    rule_after_undo = get_collection_rule("demo-store.myshopify.com", "col_summer_2026")
+    assert rule_after_undo["auto_demote_oos"] == 1
 
     # 7. Test Mandatory GDPR & Inventory Webhooks with HMAC verification
     webhook_body = json.dumps({"id": 99999, "shop_domain": "demo-store.myshopify.com"}).encode("utf-8")
