@@ -312,13 +312,22 @@ INITIAL_DEMO_PRODUCTS: Dict[str, List[Dict[str, Any]]] = {
     ],
 }
 
-DEMO_PRODUCTS_STATE: Dict[str, List[Dict[str, Any]]] = copy.deepcopy(INITIAL_DEMO_PRODUCTS)
+# Per-session sandbox storage: sandbox_sessions[session_id] = { col_id: [products] }
+DEMO_SESSIONS_STATE: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+
+
+def get_demo_products_state(session_id: str = "default") -> Dict[str, List[Dict[str, Any]]]:
+    """Returns isolated demo products state per browser session."""
+    if session_id not in DEMO_SESSIONS_STATE:
+        DEMO_SESSIONS_STATE[session_id] = copy.deepcopy(INITIAL_DEMO_PRODUCTS)
+    return DEMO_SESSIONS_STATE[session_id]
 
 
 def reset_demo_state() -> None:
     """Resets in-memory demo products & collections for clean tests."""
-    global DEMO_PRODUCTS_STATE
-    DEMO_PRODUCTS_STATE = copy.deepcopy(INITIAL_DEMO_PRODUCTS)
+    global DEMO_SESSIONS_STATE
+    DEMO_SESSIONS_STATE.clear()
+    DEMO_SESSIONS_STATE["default"] = copy.deepcopy(INITIAL_DEMO_PRODUCTS)
     DEMO_COLLECTIONS["col_summer_2026"]["sortOrder"] = "BEST_SELLING"
 
 
@@ -425,19 +434,27 @@ async def shopify_auth_callback(
 # ---------------------------------------------------------------------------
 
 @app.get("/api/collections")
-async def api_list_collections(shop: str = Query(default=DEMO_SHOP)) -> Dict[str, Any]:
+async def api_list_collections(
+    shop: str = Query(default=DEMO_SHOP),
+    session_id: str = Query(default="default"),
+) -> Dict[str, Any]:
     """Lists collections for the connected Shopify store or Demo Sandbox."""
     session = get_shop_session(shop)
     if shop == DEMO_SHOP or not session:
         collections = list(DEMO_COLLECTIONS.values())
+        demo_state = get_demo_products_state(session_id)
         for col in collections:
-            rule = get_collection_rule(shop, col["id"])
+            col_id = col["id"]
+            if col_id in demo_state:
+                col["productsCount"] = len(demo_state[col_id])
+            rule = get_collection_rule(shop, col_id)
             col["auto_demote_oos"] = bool(rule["auto_demote_oos"])
             col["restore_on_restock"] = bool(rule["restore_on_restock"])
             col["last_sorted_at"] = rule.get("last_sorted_at")
         return {
             "shop": shop,
             "mode": "demo_sandbox",
+            "session_id": session_id,
             "plan": session["plan_name"] if session else "pro",
             "collections": collections,
         }
@@ -461,6 +478,7 @@ async def api_list_collections(shop: str = Query(default=DEMO_SHOP)) -> Dict[str
 async def api_get_collection_products(
     collection_id: str,
     shop: str = Query(default=DEMO_SHOP),
+    session_id: str = Query(default="default"),
 ) -> Dict[str, Any]:
     """
     Returns products for a collection with their current stored positions,
@@ -475,7 +493,8 @@ async def api_get_collection_products(
         if collection_id not in DEMO_COLLECTIONS:
             raise HTTPException(status_code=404, detail="Collection not found in demo store")
         collection_meta = DEMO_COLLECTIONS[collection_id]
-        raw_products = copy.deepcopy(DEMO_PRODUCTS_STATE.get(collection_id, []))
+        demo_state = get_demo_products_state(session_id)
+        raw_products = copy.deepcopy(demo_state.get(collection_id, []))
     else:
         client = ShopifyGraphQLClient(shop, session["access_token"])
         raw_products = await client.fetch_collection_products(collection_id)
@@ -515,6 +534,7 @@ async def api_save_collection_order(
     collection_id: str,
     payload: SaveCollectionOrderRequest,
     shop: str = Query(default=DEMO_SHOP),
+    session_id: str = Query(default="default"),
 ) -> Dict[str, Any]:
     """
     Saves visual merchandising positions & rules:
@@ -531,7 +551,8 @@ async def api_save_collection_order(
     if shop == DEMO_SHOP or not session:
         if collection_id not in DEMO_COLLECTIONS:
             raise HTTPException(status_code=404, detail="Collection not found")
-        raw_products = DEMO_PRODUCTS_STATE[collection_id]
+        demo_state = get_demo_products_state(session_id)
+        raw_products = demo_state[collection_id]
         if DEMO_COLLECTIONS[collection_id]["sortOrder"] != "MANUAL":
             DEMO_COLLECTIONS[collection_id]["sortOrder"] = "MANUAL"
             sort_order_fixed = True
@@ -583,7 +604,8 @@ async def api_save_collection_order(
 
     # Push to demo state or live Shopify GraphQL API
     if shop == DEMO_SHOP or not session:
-        DEMO_PRODUCTS_STATE[collection_id] = ordered_products
+        demo_state = get_demo_products_state(session_id)
+        demo_state[collection_id] = ordered_products
         sync_info = {"synced": True, "moved_count": len(ordered_products), "job_id": "demo_job_1"}
     else:
         client = ShopifyGraphQLClient(shop, session["access_token"])
@@ -605,6 +627,7 @@ async def api_save_collection_order(
 async def api_restore_snapshot(
     collection_id: str,
     shop: str = Query(default=DEMO_SHOP),
+    session_id: str = Query(default="default"),
 ) -> Dict[str, Any]:
     """
     1-Click Undo / Rollback: Restores the collection's product order to the saved snapshot.
@@ -618,7 +641,8 @@ async def api_restore_snapshot(
     session = get_shop_session(shop)
 
     if shop == DEMO_SHOP or not session:
-        current_items = {p["product_id"]: p for p in DEMO_PRODUCTS_STATE.get(collection_id, [])}
+        demo_state = get_demo_products_state(session_id)
+        current_items = {p["product_id"]: p for p in demo_state.get(collection_id, [])}
         restored_list: List[Dict[str, Any]] = []
         for rank_idx, pid in enumerate(snapshot_ids):
             if pid in current_items:
@@ -633,7 +657,7 @@ async def api_restore_snapshot(
                 item_copy["effective_rank"] = len(restored_list) + 1
                 item_copy["is_pinned"] = False
                 restored_list.append(item_copy)
-        DEMO_PRODUCTS_STATE[collection_id] = restored_list
+        demo_state[collection_id] = restored_list
     else:
         client = ShopifyGraphQLClient(shop, session["access_token"])
         await client.push_collection_order(collection_id, snapshot_ids)
@@ -671,16 +695,18 @@ async def api_simulate_stock_change(
     collection_id: str,
     payload: SimulateStockRequest,
     shop: str = Query(default=DEMO_SHOP),
+    session_id: str = Query(default="default"),
 ) -> Dict[str, Any]:
     """
     Sandbox helper: Simulates a real-time Shopify `inventory_levels/update` webhook
     for a product (e.g., selling out to 0 or restocking to +25 units).
     Demonstrates automatic OOS demotion AND Restock Memory restoration!
     """
-    if collection_id not in DEMO_PRODUCTS_STATE:
+    demo_state = get_demo_products_state(session_id)
+    if collection_id not in demo_state:
         raise HTTPException(status_code=404, detail="Demo collection not found")
 
-    raw_products = DEMO_PRODUCTS_STATE[collection_id]
+    raw_products = demo_state[collection_id]
     target_found = False
     for p in raw_products:
         if p["product_id"] == payload.product_id:
@@ -704,7 +730,7 @@ async def api_simulate_stock_change(
     )
 
     save_product_positions_batch(shop, collection_id, list(updated_positions.values()))
-    DEMO_PRODUCTS_STATE[collection_id] = ordered_products
+    demo_state[collection_id] = ordered_products
 
     return {
         "status": "webhook_simulated",
@@ -719,16 +745,18 @@ async def api_simulate_new_product(
     collection_id: str,
     payload: AddDemoProductRequest,
     shop: str = Query(default=DEMO_SHOP),
+    session_id: str = Query(default="default"),
 ) -> Dict[str, Any]:
     """
     Sandbox helper: Simulates a `products/create` webhook when a merchant adds a new product.
     Demonstrates that new arrivals are placed according to `new_products_position` (e.g. right after
     pinned items, NEVER buried below out-of-stock products!).
     """
-    if collection_id not in DEMO_PRODUCTS_STATE:
+    demo_state = get_demo_products_state(session_id)
+    if collection_id not in demo_state:
         raise HTTPException(status_code=404, detail="Demo collection not found")
 
-    raw_products = DEMO_PRODUCTS_STATE[collection_id]
+    raw_products = demo_state[collection_id]
     new_id = f"prod_new_{len(raw_products) + 101}"
     new_prod = {
         "product_id": new_id,
@@ -760,8 +788,7 @@ async def api_simulate_new_product(
     )
 
     save_product_positions_batch(shop, collection_id, list(updated_positions.values()))
-    DEMO_PRODUCTS_STATE[collection_id] = ordered_products
-    DEMO_COLLECTIONS[collection_id]["productsCount"] = len(ordered_products)
+    demo_state[collection_id] = ordered_products
 
     return {
         "status": "new_product_added",

@@ -655,6 +655,11 @@
   <script>
     const urlParams = new URLSearchParams(window.location.search);
     const currentShop = urlParams.get("shop") || "demo-store.myshopify.com";
+    let currentSessionId = localStorage.getItem("sortflow_sandbox_session_id");
+    if (!currentSessionId) {
+      currentSessionId = "sess_" + Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
+      localStorage.setItem("sortflow_sandbox_session_id", currentSessionId);
+    }
 
     let collections = [];
     let currentCollectionId = null;
@@ -665,7 +670,7 @@
 
     async function initApp() {
       setupGridDragListeners();
-      const res = await fetch(`/api/collections?shop=${encodeURIComponent(currentShop)}`);
+      const res = await fetch(`/api/collections?shop=${encodeURIComponent(currentShop)}&session_id=${encodeURIComponent(currentSessionId)}`);
       const data = await res.json();
       collections = data.collections || [];
 
@@ -697,7 +702,7 @@
     }
 
     async function loadCollectionProducts(collectionId) {
-      const res = await fetch(`/api/collections/${encodeURIComponent(collectionId)}/products?shop=${encodeURIComponent(currentShop)}`);
+      const res = await fetch(`/api/collections/${encodeURIComponent(collectionId)}/products?shop=${encodeURIComponent(currentShop)}&session_id=${encodeURIComponent(currentSessionId)}`);
       const data = await res.json();
 
       products = data.products || [];
@@ -1055,7 +1060,7 @@
       };
 
       const res = await fetch(
-        `/api/collections/${encodeURIComponent(currentCollectionId)}/save?shop=${encodeURIComponent(currentShop)}`,
+        `/api/collections/${encodeURIComponent(currentCollectionId)}/save?shop=${encodeURIComponent(currentShop)}&session_id=${encodeURIComponent(currentSessionId)}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1079,7 +1084,7 @@
 
     async function restoreSnapshot() {
       const res = await fetch(
-        `/api/collections/${encodeURIComponent(currentCollectionId)}/restore-snapshot?shop=${encodeURIComponent(currentShop)}`,
+        `/api/collections/${encodeURIComponent(currentCollectionId)}/restore-snapshot?shop=${encodeURIComponent(currentShop)}&session_id=${encodeURIComponent(currentSessionId)}`,
         { method: "POST" }
       );
       if (!res.ok) {
@@ -1097,7 +1102,7 @@
       await saveCollectionOrderSilent();
 
       const res = await fetch(
-        `/api/collections/${encodeURIComponent(currentCollectionId)}/simulate-stock?shop=${encodeURIComponent(currentShop)}`,
+        `/api/collections/${encodeURIComponent(currentCollectionId)}/simulate-stock?shop=${encodeURIComponent(currentShop)}&session_id=${encodeURIComponent(currentSessionId)}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1123,7 +1128,7 @@
       await saveCollectionOrderSilent();
       const randNum = Math.floor(100 + Math.random() * 899);
       const res = await fetch(
-        `/api/collections/${encodeURIComponent(currentCollectionId)}/simulate-new-product?shop=${encodeURIComponent(currentShop)}`,
+        `/api/collections/${encodeURIComponent(currentCollectionId)}/simulate-new-product?shop=${encodeURIComponent(currentShop)}&session_id=${encodeURIComponent(currentSessionId)}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
