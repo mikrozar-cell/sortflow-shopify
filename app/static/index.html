@@ -765,23 +765,37 @@
 
         card.addEventListener("dragover", (e) => {
           e.preventDefault();
-          if (draggedIndex === null || draggedIndex === idx) {
-            card.classList.remove("drop-before", "drop-after");
-            return;
-          }
+          if (draggedIndex === null) return;
           e.dataTransfer.dropEffect = "move";
 
           const rect = card.getBoundingClientRect();
           const midpoint = rect.left + rect.width / 2;
           const side = e.clientX < midpoint ? "before" : "after";
-          currentDropSide = side;
 
+          // Calculate where the dragged item would land if dropped right here
+          let targetIndex;
+          if (draggedIndex < idx) {
+            targetIndex = (side === "after") ? idx : idx - 1;
+          } else if (draggedIndex > idx) {
+            targetIndex = (side === "after") ? idx + 1 : idx;
+          } else {
+            // Dragging over itself: dropping before or after itself results in the exact same rank!
+            targetIndex = idx;
+          }
+          targetIndex = Math.max(0, Math.min(products.length - 1, targetIndex));
+
+          // If dropping here does NOT change the item's position, don't show an insertion line!
+          if (targetIndex === draggedIndex) {
+            clearAllDropIndicators();
+            return;
+          }
+
+          currentDropSide = side;
           clearAllDropIndicators();
           card.classList.add(side === "before" ? "drop-before" : "drop-after");
           const pill = card.querySelector(".drop-pill-indicator");
           if (pill) {
-            const targetRank = side === "before" ? idx + 1 : idx + 2;
-            pill.textContent = `Insert #${Math.min(targetRank, products.length)}`;
+            pill.textContent = `Move to #${targetIndex + 1}`;
           }
         });
 
