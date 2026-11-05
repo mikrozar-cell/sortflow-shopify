@@ -664,6 +664,7 @@
     let currentDropSide = "before"; // 'before' or 'after'
 
     async function initApp() {
+      setupGridDragListeners();
       const res = await fetch(`/api/collections?shop=${encodeURIComponent(currentShop)}`);
       const data = await res.json();
       collections = data.collections || [];
@@ -725,9 +726,88 @@
       renderGrid();
     }
 
+    let lastActiveTargetIndex = null;
+
     function clearAllDropIndicators() {
       document.querySelectorAll(".product-card").forEach((el) => {
         el.classList.remove("drop-before", "drop-after");
+      });
+      lastActiveTargetIndex = null;
+    }
+
+    function setupGridDragListeners() {
+      const grid = document.getElementById("productGrid");
+      grid.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        if (draggedIndex === null) return;
+        e.dataTransfer.dropEffect = "move";
+
+        // Find nearest product card based on horizontal center
+        const cards = Array.from(grid.querySelectorAll(".product-card:not(.is-dragging)"));
+        if (cards.length === 0) return;
+
+        let closestCard = null;
+        let minDistance = Infinity;
+
+        cards.forEach((card) => {
+          const rect = card.getBoundingClientRect();
+          // Distance from cursor to card center
+          const cx = rect.left + rect.width / 2;
+          const cy = rect.top + rect.height / 2;
+          const dist = Math.hypot(e.clientX - cx, e.clientY - cy);
+          if (dist < minDistance) {
+            minDistance = dist;
+            closestCard = card;
+          }
+        });
+
+        if (!closestCard) return;
+
+        const idx = parseInt(closestCard.dataset.index, 10);
+        const rect = closestCard.getBoundingClientRect();
+        const side = e.clientX < (rect.left + rect.width / 2) ? "before" : "after";
+
+        let targetIndex;
+        if (draggedIndex < idx) {
+          targetIndex = (side === "after") ? idx : idx - 1;
+        } else if (draggedIndex > idx) {
+          targetIndex = (side === "after") ? idx + 1 : idx;
+        } else {
+          targetIndex = idx;
+        }
+        targetIndex = Math.max(0, Math.min(products.length - 1, targetIndex));
+
+        if (targetIndex === draggedIndex) {
+          clearAllDropIndicators();
+          return;
+        }
+
+        currentDropSide = side;
+        lastActiveTargetIndex = targetIndex;
+
+        // Apply drop indicator smoothly without flickering
+        cards.forEach((c) => c.classList.remove("drop-before", "drop-after"));
+        closestCard.classList.add(side === "before" ? "drop-before" : "drop-after");
+        const pill = closestCard.querySelector(".drop-pill-indicator");
+        if (pill) {
+          pill.textContent = `Move to #${targetIndex + 1}`;
+        }
+      });
+
+      grid.addEventListener("drop", (e) => {
+        e.preventDefault();
+        if (draggedIndex === null || lastActiveTargetIndex === null) {
+          clearAllDropIndicators();
+          return;
+        }
+        const target = lastActiveTargetIndex;
+        clearAllDropIndicators();
+        if (target === draggedIndex) return;
+
+        const moved = products.splice(draggedIndex, 1)[0];
+        products.splice(target, 0, moved);
+        draggedIndex = null;
+        recomputeLocalPreview();
       });
     }
 
