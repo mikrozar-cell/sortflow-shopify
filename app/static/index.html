@@ -563,7 +563,7 @@
     <div class="topbar__badges">
       <span id="modeBadge" class="badge badge--dark">Sandbox Mode</span>
       <span id="sortOrderBadge" class="badge badge--warning">Shopify Sort: BEST_SELLING</span>
-      <button class="btn btn--sm" onclick="subscribeProPlan()">⚡ Pro Unlimited ($9.99/mo)</button>
+      <button id="proBillingBtn" class="btn btn--sm" onclick="subscribeProPlan()">⚡ Pro Unlimited ($9.99/mo)</button>
     </div>
   </header>
 
@@ -640,7 +640,7 @@
         <button class="btn btn--sm" onclick="moveSelected('top')">↑ Move Selected to Top</button>
         <button class="btn btn--sm" onclick="moveSelected('bottom')">↓ Move Selected to Bottom</button>
       </div>
-      <div class="toolbar__group">
+      <div id="webhookSandboxGroup" class="toolbar__group">
         <span style="font-size: 12px; color: var(--p-text-subdued); font-weight: 600;">Webhook Sandbox:</span>
         <button class="btn btn--sm" onclick="simulateNewArrival()">
           + Simulate New Product Webhook
@@ -656,7 +656,35 @@
 
   <script>
     const urlParams = new URLSearchParams(window.location.search);
-    const currentShop = urlParams.get("shop") || "demo-store.myshopify.com";
+    const urlIdToken = urlParams.get("id_token") || "";
+
+    function resolveShopDomain() {
+      const fromQuery = urlParams.get("shop");
+      if (fromQuery && fromQuery.endsWith(".myshopify.com")) {
+        try { sessionStorage.setItem("sortflow_active_shop", fromQuery); } catch (_) {}
+        return fromQuery;
+      }
+      if (window.shopify && window.shopify.config && window.shopify.config.shop) {
+        return window.shopify.config.shop;
+      }
+      if (urlIdToken && urlIdToken.split(".").length === 3) {
+        try {
+          const payload = JSON.parse(atob(urlIdToken.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+          if (payload.dest) {
+            const destHost = payload.dest.replace(/^https?:\/\//, "").split("/")[0];
+            if (destHost.endsWith(".myshopify.com")) return destHost;
+          }
+        } catch (_) {}
+      }
+      try {
+        const saved = sessionStorage.getItem("sortflow_active_shop");
+        if (saved && saved.endsWith(".myshopify.com")) return saved;
+      } catch (_) {}
+      return "demo-store.myshopify.com";
+    }
+
+    const currentShop = resolveShopDomain();
+    let currentMode = currentShop === "demo-store.myshopify.com" ? "demo_sandbox" : "live_shopify";
     let currentSessionId = localStorage.getItem("sortflow_sandbox_session_id");
     if (!currentSessionId) {
       currentSessionId = "sess_" + Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
@@ -672,37 +700,62 @@
 
     async function authFetch(url, options = {}) {
       options.headers = options.headers || {};
+      let bearer = urlIdToken;
       try {
         if (window.shopify && typeof window.shopify.idToken === "function") {
           const token = await window.shopify.idToken();
           if (token) {
-            options.headers["Authorization"] = `Bearer ${token}`;
+            bearer = token;
           }
         }
       } catch (err) {
         // Fallback for direct standalone browser sessions
+      }
+      if (bearer) {
+        options.headers["Authorization"] = `Bearer ${bearer}`;
       }
       return fetch(url, options);
     }
 
     async function initApp() {
       setupGridDragListeners();
+
+      if (urlParams.get("billing") === "confirmed") {
+        const proBtn = document.getElementById("proBillingBtn");
+        if (proBtn) {
+          proBtn.textContent = "✓ Pro Unlimited Active";
+          proBtn.classList.add("btn--primary");
+        }
+        showStatusBanner("✓ SortFlow Pro Unlimited ($9.99/mo, 14-day free trial) subscription confirmed via Shopify Billing API!");
+      }
+
       const res = await authFetch(`/api/collections?shop=${encodeURIComponent(currentShop)}&session_id=${encodeURIComponent(currentSessionId)}`);
       if (res.status === 401) {
-        let authUrl = `/auth?shop=${encodeURIComponent(currentShop)}`;
+        let authUrl = `${window.location.origin}/auth?shop=${encodeURIComponent(currentShop)}`;
         try {
           const err = await res.json();
-          if (err.detail && err.detail.auth_url) authUrl = err.detail.auth_url;
+          if (err.detail && err.detail.auth_url) {
+            authUrl = err.detail.auth_url.startsWith("http")
+              ? err.detail.auth_url
+              : `${window.location.origin}${err.detail.auth_url}`;
+          }
         } catch (_) {}
-        if (window.top !== window.self) {
-          window.top.location.href = authUrl;
-        } else {
+        try {
+          open(authUrl, "_top");
+        } catch (_) {}
+        if (window.top === window.self) {
           window.location.href = authUrl;
         }
         return;
       }
       const data = await res.json();
       collections = data.collections || [];
+      currentMode = data.mode || currentMode;
+
+      const sbGroup = document.getElementById("webhookSandboxGroup");
+      if (sbGroup) {
+        sbGroup.style.display = currentMode === "demo_sandbox" ? "flex" : "none";
+      }
 
       const modeBadge = document.getElementById("modeBadge");
       modeBadge.textContent = data.mode === "demo_sandbox"
@@ -725,9 +778,13 @@
             </a>
           </div>
         `;
-        document.getElementById("saveOrderBtn").disabled = true;
+        const saveBtnEl = document.getElementById("saveBtn");
+        if (saveBtnEl) saveBtnEl.disabled = true;
         return;
       }
+
+      const saveBtnEl = document.getElementById("saveBtn");
+      if (saveBtnEl) saveBtnEl.disabled = false;
 
       collections.forEach((col) => {
         const opt = document.createElement("option");
@@ -1026,13 +1083,15 @@
           <div class="product-card__footer">
             ${stockBadge}
             ${
-              prod.is_in_stock
-                ? `<button class="btn btn--sm btn--critical" onclick="simulateStock('${prod.product_id}', 0)">
-                     Sell Out (0)
-                   </button>`
-                : `<button class="btn btn--sm btn--primary" onclick="simulateStock('${prod.product_id}', 25)">
-                     Restock (+25)
-                   </button>`
+              currentMode === "demo_sandbox"
+                ? (prod.is_in_stock
+                    ? `<button class="btn btn--sm btn--critical" onclick="simulateStock('${prod.product_id}', 0)">
+                         Sell Out (0)
+                       </button>`
+                    : `<button class="btn btn--sm btn--primary" onclick="simulateStock('${prod.product_id}', 25)">
+                         Restock (+25)
+                       </button>`)
+                : ""
             }
           </div>
         `;
@@ -1226,12 +1285,48 @@
     }
 
     async function subscribeProPlan() {
-      const res = await authFetch(`/api/billing/subscribe?shop=${encodeURIComponent(currentShop)}`, {
-        method: "POST",
-      });
-      const data = await res.json();
-      showStatusBanner(`💳 Shopify Billing API ready: ${data.plan || "SortFlow Pro ($9.99/mo, 14-day free trial)"}`);
-      showToast("Billing API check succeeded");
+      const btn = document.getElementById("proBillingBtn");
+      const origText = btn ? btn.textContent : "⚡ Pro Unlimited ($9.99/mo)";
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "⏳ Connecting to Shopify Billing...";
+      }
+      try {
+        const res = await authFetch(`/api/billing/subscribe?shop=${encodeURIComponent(currentShop)}`, {
+          method: "POST",
+        });
+        const data = await res.json();
+        if (data.confirmation_url && data.mode === "live_shopify") {
+          showStatusBanner("💳 Redirecting to Shopify Billing approval screen ($9.99/mo, 14-day free trial)...");
+          showToast("Redirecting to Shopify Billing...");
+          try {
+            open(data.confirmation_url, "_top");
+          } catch (_) {}
+          const link = document.createElement("a");
+          link.href = data.confirmation_url;
+          link.target = "_top";
+          link.rel = "noopener";
+          document.body.appendChild(link);
+          link.click();
+          setTimeout(() => {
+            try { window.top.location.href = data.confirmation_url; } catch (_) {}
+          }, 250);
+          return;
+        }
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "✓ Pro Unlimited Active ($9.99/mo)";
+          btn.classList.add("btn--primary");
+        }
+        showStatusBanner(`💳 Shopify Billing API ready: ${data.plan || "SortFlow Pro ($9.99/mo, 14-day free trial)"}`);
+        showToast("Pro Unlimited Plan activated!");
+      } catch (err) {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = origText;
+        }
+        showToast("Could not initiate billing. Please try again.");
+      }
     }
 
     function showStatusBanner(msg) {

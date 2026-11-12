@@ -370,35 +370,18 @@ class AddDemoProductRequest(BaseModel):
 
 @app.get("/", response_class=HTMLResponse)
 async def index_page(
+    request: Request,
     shop: Optional[str] = Query(default=None),
     host: Optional[str] = Query(default=None),
     embedded: Optional[str] = Query(default=None),
+    id_token: Optional[str] = Query(default=None),
 ) -> Any:
-    """Serves the Shopify Polaris Visual Collection Merchandiser UI with automatic OAuth initiation."""
-    if shop and shop.endswith(".myshopify.com") and shop != DEMO_SHOP:
-        session = get_shop_session(shop)
-        if not session or not session.get("access_token"):
-            auth_url = f"/auth?shop={urllib.parse.quote(shop)}"
-            # If embedded inside Shopify Admin iframe, break out to top window to authenticate
-            return HTMLResponse(
-                f"""<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <script>
-    var target = "{auth_url}";
-    if (window.top !== window.self) {{
-      window.top.location.href = target;
-    }} else {{
-      window.location.href = target;
-    }}
-  </script>
-</head>
-<body style="font-family:-apple-system,sans-serif;text-align:center;padding:40px;color:#202223;">
-  <p>Authenticating SortFlow with your Shopify store...</p>
-</body>
-</html>"""
-            )
+    """Serves the Shopify Polaris Visual Collection Merchandiser UI with automatic Token Exchange."""
+    if shop and shop.endswith(".myshopify.com") and shop != DEMO_SHOP and id_token:
+        try:
+            await resolve_shop_session(shop, request=request, id_token_param=id_token)
+        except Exception:
+            pass
     return FileResponse(STATIC_DIR / "index.html")
 
 
@@ -511,17 +494,88 @@ async def shopify_auth_callback(
     return RedirectResponse(url=f"/?shop={urllib.parse.quote(shop)}")
 
 
+def _extract_bearer_token(request: Optional[Request], id_token_param: Optional[str] = None) -> Optional[str]:
+    if id_token_param:
+        return id_token_param.strip()
+    if not request:
+        return None
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization") or ""
+    if auth_header.lower().startswith("bearer "):
+        return auth_header[7:].strip()
+    q_tok = request.query_params.get("id_token")
+    if q_tok:
+        return q_tok.strip()
+    return None
+
+
+async def resolve_shop_session(
+    shop: str,
+    request: Optional[Request] = None,
+    id_token_param: Optional[str] = None,
+    force_refresh: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """
+    Resolves a store's access token from SQLite or exchanges the App Bridge v4
+    session token (id_token) via Shopify Managed Installation Token Exchange.
+    """
+    if not shop or shop == DEMO_SHOP:
+        return get_shop_session(shop)
+
+    if not force_refresh:
+        existing = get_shop_session(shop)
+        if existing and existing.get("access_token"):
+            return existing
+
+    id_token = _extract_bearer_token(request, id_token_param)
+    if not id_token:
+        return get_shop_session(shop) if not force_refresh else None
+
+    import httpx
+
+    token_url = f"https://{shop}/admin/oauth/access_token"
+    async with httpx.AsyncClient(timeout=15.0) as http_client:
+        for requested_type in (
+            "urn:shopify:params:oauth:token-type:offline-access-token",
+            "urn:shopify:params:oauth:token-type:online-access-token",
+        ):
+            try:
+                resp = await http_client.post(
+                    token_url,
+                    json={
+                        "client_id": SHOPIFY_API_KEY,
+                        "client_secret": SHOPIFY_API_SECRET,
+                        "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+                        "subject_token": id_token,
+                        "subject_token_type": "urn:ietf:params:oauth:token-type:id_token",
+                        "requested_token_type": requested_type,
+                    },
+                    headers={"Content-Type": "application/json", "Accept": "application/json"},
+                )
+                if resp.status_code == 200:
+                    payload = resp.json()
+                    access_token = payload.get("access_token", "")
+                    if access_token:
+                        scope = payload.get("scope", SHOPIFY_SCOPES)
+                        upsert_shop_session(shop_domain=shop, access_token=access_token, scope=scope)
+                        return get_shop_session(shop)
+            except Exception:
+                continue
+
+    return get_shop_session(shop) if not force_refresh else None
+
+
 # ---------------------------------------------------------------------------
 # Merchandiser REST API
 # ---------------------------------------------------------------------------
 
 @app.get("/api/collections")
 async def api_list_collections(
+    request: Request,
     shop: str = Query(default=DEMO_SHOP),
     session_id: str = Query(default="default"),
+    id_token: Optional[str] = Query(default=None),
 ) -> Dict[str, Any]:
     """Lists collections for the connected Shopify store or Demo Sandbox."""
-    session = get_shop_session(shop)
     if shop == DEMO_SHOP:
         collections = list(DEMO_COLLECTIONS.values())
         demo_state = get_demo_products_state(session_id)
@@ -541,6 +595,7 @@ async def api_list_collections(
             "collections": collections,
         }
 
+    session = await resolve_shop_session(shop, request=request, id_token_param=id_token)
     if not session or not session.get("access_token"):
         raise HTTPException(
             status_code=401,
@@ -548,7 +603,18 @@ async def api_list_collections(
         )
 
     client = ShopifyGraphQLClient(shop, session["access_token"])
-    collections = await client.list_collections(limit=50)
+    try:
+        collections = await client.list_collections(limit=50)
+    except Exception:
+        session = await resolve_shop_session(shop, request=request, id_token_param=id_token, force_refresh=True)
+        if not session or not session.get("access_token"):
+            raise HTTPException(
+                status_code=401,
+                detail={"error": "unauthorized", "auth_url": f"/auth?shop={shop}"},
+            )
+        client = ShopifyGraphQLClient(shop, session["access_token"])
+        collections = await client.list_collections(limit=50)
+
     for col in collections:
         rule = get_collection_rule(shop, col["id"])
         col["auto_demote_oos"] = bool(rule["auto_demote_oos"])
@@ -565,14 +631,15 @@ async def api_list_collections(
 @app.get("/api/collections/{collection_id}/products")
 async def api_get_collection_products(
     collection_id: str,
+    request: Request,
     shop: str = Query(default=DEMO_SHOP),
     session_id: str = Query(default="default"),
+    id_token: Optional[str] = Query(default=None),
 ) -> Dict[str, Any]:
     """
     Returns products for a collection with their current stored positions,
     pin flags, Out-of-Stock status, Restock Memory state, and snapshot availability.
     """
-    session = get_shop_session(shop)
     rule = get_collection_rule(shop, collection_id)
     stored_positions = get_product_positions(shop, collection_id)
     snapshot = get_latest_snapshot(shop, collection_id)
@@ -584,18 +651,32 @@ async def api_get_collection_products(
         demo_state = get_demo_products_state(session_id)
         raw_products = copy.deepcopy(demo_state.get(collection_id, []))
     else:
+        session = await resolve_shop_session(shop, request=request, id_token_param=id_token)
         if not session or not session.get("access_token"):
             raise HTTPException(
                 status_code=401,
                 detail={"error": "unauthorized", "auth_url": f"/auth?shop={shop}"},
             )
         client = ShopifyGraphQLClient(shop, session["access_token"])
-        raw_products = await client.fetch_collection_products(collection_id)
-        collection_meta = {
-            "id": collection_id,
-            "title": f"Collection #{collection_id}",
-            "sortOrder": "MANUAL",
-        }
+        if hasattr(client, "fetch_collection_details_and_products"):
+            try:
+                collection_meta, raw_products = await client.fetch_collection_details_and_products(collection_id)
+            except Exception:
+                session = await resolve_shop_session(shop, request=request, id_token_param=id_token, force_refresh=True)
+                if not session or not session.get("access_token"):
+                    raise HTTPException(
+                        status_code=401,
+                        detail={"error": "unauthorized", "auth_url": f"/auth?shop={shop}"},
+                    )
+                client = ShopifyGraphQLClient(shop, session["access_token"])
+                collection_meta, raw_products = await client.fetch_collection_details_and_products(collection_id)
+        else:
+            raw_products = await client.fetch_collection_products(collection_id)
+            collection_meta = {
+                "id": collection_id,
+                "title": f"Collection #{collection_id}",
+                "sortOrder": "MANUAL",
+            }
 
     # Compute effective deterministic order
     ordered_products, updated_positions = compute_final_order(
@@ -626,8 +707,10 @@ async def api_get_collection_products(
 async def api_save_collection_order(
     collection_id: str,
     payload: SaveCollectionOrderRequest,
+    request: Request,
     shop: str = Query(default=DEMO_SHOP),
     session_id: str = Query(default="default"),
+    id_token: Optional[str] = Query(default=None),
 ) -> Dict[str, Any]:
     """
     Saves visual merchandising positions & rules:
@@ -636,7 +719,7 @@ async def api_save_collection_order(
     3. Computes deterministic positions (Pinned -> In-Stock -> Auto-Demoted OOS with Restock Memory).
     4. Pushes the final order to Shopify via GraphQL collectionReorderProducts.
     """
-    session = get_shop_session(shop)
+    session = await resolve_shop_session(shop, request=request, id_token_param=id_token)
     existing_positions = get_product_positions(shop, collection_id)
     existing_snapshot = get_latest_snapshot(shop, collection_id)
 
@@ -657,7 +740,10 @@ async def api_save_collection_order(
             )
         client = ShopifyGraphQLClient(shop, session["access_token"])
         raw_products = await client.fetch_collection_products(collection_id)
-        sort_order_fixed = await client.ensure_manual_sort_order(collection_id)
+        try:
+            sort_order_fixed = await client.ensure_manual_sort_order(collection_id)
+        except Exception:
+            sort_order_fixed = False
 
     # Always save a full snapshot of (product_id, is_pinned) and collection rules before applying changes
     current_snapshot = {
@@ -733,8 +819,10 @@ async def api_save_collection_order(
 @app.post("/api/collections/{collection_id}/restore-snapshot")
 async def api_restore_snapshot(
     collection_id: str,
+    request: Request,
     shop: str = Query(default=DEMO_SHOP),
     session_id: str = Query(default="default"),
+    id_token: Optional[str] = Query(default=None),
 ) -> Dict[str, Any]:
     """
     1-Click Undo / Rollback: Restores the collection's product order to the saved snapshot.
@@ -763,7 +851,7 @@ async def api_restore_snapshot(
             snapshot_items.append({"product_id": str(item), "is_pinned": False})
 
     snapshot_ids: List[str] = [i["product_id"] for i in snapshot_items]
-    session = get_shop_session(shop)
+    session = await resolve_shop_session(shop, request=request, id_token_param=id_token)
 
     if shop == DEMO_SHOP or not session:
         demo_state = get_demo_products_state(session_id)
@@ -941,11 +1029,15 @@ async def api_simulate_new_product(
 # ---------------------------------------------------------------------------
 
 @app.post("/api/billing/subscribe")
-async def api_create_subscription(shop: str = Query(default=DEMO_SHOP)) -> Dict[str, Any]:
+async def api_create_subscription(
+    request: Request,
+    shop: str = Query(default=DEMO_SHOP),
+    id_token: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
     """Creates a recurring $9.99/mo subscription via Shopify GraphQL Billing API."""
-    session = get_shop_session(shop)
+    session = await resolve_shop_session(shop, request=request, id_token_param=id_token)
     return_url = f"{SHOPIFY_APP_URL.rstrip('/')}/?shop={urllib.parse.quote(shop)}&billing=confirmed"
-    if shop == DEMO_SHOP or not session:
+    if shop == DEMO_SHOP or not session or not session.get("access_token"):
         return {
             "mode": "demo_sandbox",
             "plan": "SortFlow Pro Unlimited ($9.99/mo, 14-day trial)",
@@ -953,7 +1045,15 @@ async def api_create_subscription(shop: str = Query(default=DEMO_SHOP)) -> Dict[
         }
 
     client = ShopifyGraphQLClient(shop, session["access_token"])
-    sub = await client.create_recurring_subscription(return_url=return_url, test=True)
+    try:
+        sub = await client.create_recurring_subscription(return_url=return_url, test=True)
+    except Exception:
+        session = await resolve_shop_session(shop, request=request, id_token_param=id_token, force_refresh=True)
+        if not session or not session.get("access_token"):
+            raise HTTPException(status_code=401, detail={"error": "unauthorized", "auth_url": f"/auth?shop={shop}"})
+        client = ShopifyGraphQLClient(shop, session["access_token"])
+        sub = await client.create_recurring_subscription(return_url=return_url, test=True)
+
     return {
         "mode": "live_shopify",
         "subscription": sub,

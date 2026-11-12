@@ -191,13 +191,16 @@ class ShopifyGraphQLClient:
             for n in nodes
         ]
 
-    async def fetch_collection_products(self, collection_id: str, first: int = 250) -> List[Dict[str, Any]]:
+    async def fetch_collection_details_and_products(
+        self, collection_id: str, first: int = 250
+    ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
         gid = collection_id if collection_id.startswith("gid://") else f"gid://shopify/Collection/{collection_id}"
         query = """
         query GetCollectionProducts($id: ID!, $first: Int!) {
           collection(id: $id) {
             id
             title
+            handle
             sortOrder
             products(first: $first) {
               nodes {
@@ -223,6 +226,13 @@ class ShopifyGraphQLClient:
         """
         data = await self.execute(query, {"id": gid, "first": first})
         col = data.get("collection") or {}
+        col_meta = {
+            "id": (col.get("id") or gid).split("/")[-1],
+            "gid": col.get("id") or gid,
+            "title": col.get("title") or f"Collection #{collection_id}",
+            "handle": col.get("handle") or "",
+            "sortOrder": col.get("sortOrder") or "MANUAL",
+        }
         nodes = (col.get("products") or {}).get("nodes", [])
         result: List[Dict[str, Any]] = []
         for idx, n in enumerate(nodes):
@@ -249,7 +259,11 @@ class ShopifyGraphQLClient:
                     "shopify_rank": idx + 1,
                 }
             )
-        return result
+        return col_meta, result
+
+    async def fetch_collection_products(self, collection_id: str, first: int = 250) -> List[Dict[str, Any]]:
+        _, products = await self.fetch_collection_details_and_products(collection_id, first=first)
+        return products
 
     async def ensure_manual_sort_order(self, collection_id: str) -> bool:
         gid = collection_id if collection_id.startswith("gid://") else f"gid://shopify/Collection/{collection_id}"
@@ -280,7 +294,10 @@ class ShopifyGraphQLClient:
           }
         }
         """
-        await self.execute(mutation, {"input": {"id": gid, "sortOrder": "MANUAL"}})
+        res = await self.execute(mutation, {"input": {"id": gid, "sortOrder": "MANUAL"}})
+        upd = res.get("collectionUpdate") or {}
+        if upd.get("userErrors"):
+            return False
         return True
 
     async def push_collection_order(self, collection_id: str, ordered_product_ids: List[str]) -> Dict[str, Any]:
@@ -292,6 +309,13 @@ class ShopifyGraphQLClient:
             }
             for idx, pid in enumerate(ordered_product_ids[:250])
         ]
+        if not moves:
+            return {
+                "synced": True,
+                "moved_count": 0,
+                "job_id": None,
+                "user_errors": [],
+            }
         mutation = """
         mutation ReorderCollectionProducts($id: ID!, $moves: [MoveInput!]!) {
           collectionReorderProducts(id: $id, moves: $moves) {
