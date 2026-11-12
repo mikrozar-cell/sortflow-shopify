@@ -175,11 +175,11 @@ def run_all_tests() -> None:
     assert r_good_hmac.status_code == 200
     assert r_good_hmac.json()["status"] == "gdpr_acknowledged"
 
-    # 8. Test Live Store OAuth Redirection & 401 Guard (No demo fallback for live stores!)
+    # 8. Test Live Store App Bridge UI & 401 Guard (No demo fallback for live stores!)
     r_live_root = client.get("/?shop=reviewer-test-store.myshopify.com")
     assert r_live_root.status_code == 200
-    assert "Authenticating SortFlow with your Shopify store" in r_live_root.text
-    assert "/auth?shop=reviewer-test-store.myshopify.com" in r_live_root.text
+    assert "app-bridge.js" in r_live_root.text
+    assert "resolveShopDomain" in r_live_root.text
 
     r_live_api = client.get("/api/collections?shop=reviewer-test-store.myshopify.com")
     assert r_live_api.status_code == 401
