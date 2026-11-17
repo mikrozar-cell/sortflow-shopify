@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS shop_sessions (
     shop_domain TEXT PRIMARY KEY,
     access_token TEXT NOT NULL,
     scope TEXT NOT NULL DEFAULT 'read_products,write_products',
-    plan_name TEXT NOT NULL DEFAULT 'pro',
+    plan_name TEXT NOT NULL DEFAULT 'free',
     installed_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -105,7 +105,7 @@ def upsert_shop_session(
         con.execute(
             """
             INSERT INTO shop_sessions (shop_domain, access_token, scope, plan_name, installed_at, updated_at)
-            VALUES (?, ?, ?, 'pro', ?, ?)
+            VALUES (?, ?, ?, 'free', ?, ?)
             ON CONFLICT(shop_domain) DO UPDATE SET
                 access_token = excluded.access_token,
                 scope = excluded.scope,

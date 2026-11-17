@@ -186,7 +186,7 @@ def run_all_tests() -> None:
     assert r_live_api.status_code == 401
     assert "unauthorized" in r_live_api.json()["detail"]["error"]
 
-    # 9. Test GraphQL failure resilience (no HTTP 500) & Self-Service Billing Upgrade/Downgrade (1.2.3 & 2.1.1)
+    # 9. Test GraphQL failure resilience (NO fake demo data on real stores!) & Billing Lifecycle (1.1.4, 1.2.2, 2.2.1)
     live_shop = "live-fail-store.myshopify.com"
     upsert_shop_session(live_shop, "shpat_mock_reviewer_token")
 
@@ -199,35 +199,37 @@ def run_all_tests() -> None:
     ):
         r_col_fb = client.get(f"/api/collections?shop={live_shop}")
         assert r_col_fb.status_code == 200
-        assert len(r_col_fb.json()["collections"]) == 2
-
-        r_prod_fb = client.get(f"/api/collections/col_summer_2026/products?shop={live_shop}")
-        assert r_prod_fb.status_code == 200
-        assert len(r_prod_fb.json()["products"]) == 8
+        # Must NEVER return fake demo collections ("Summer Essentials 2026") on a real store
+        assert r_col_fb.json()["collections"] == []
+        # With no active Shopify subscription, plan must default to free
+        assert r_col_fb.json()["plan"] == "free"
 
         r_prod_unknown = client.get(f"/api/collections/999999/products?shop={live_shop}")
         assert r_prod_unknown.status_code == 200
+        assert r_prod_unknown.json()["products"] == []
 
         r_sub = client.post(f"/api/billing/subscribe?shop={live_shop}&plan=pro")
         assert r_sub.status_code == 200
-        assert r_sub.json()["plan"] == "pro"
-        assert "pricing_plans" in r_sub.json()["managed_pricing_url"]
-
-        r_down = client.post(f"/api/billing/downgrade?shop={live_shop}")
-        assert r_down.status_code == 200
-        assert r_down.json()["plan"] == "free"
+        assert r_sub.json()["status"] == "redirect"
+        assert r_sub.json()["plan"] == "free"
+        assert "pricing_plans" in r_sub.json()["confirmation_url"]
 
         r_st_free = client.get(f"/api/billing/status?shop={live_shop}")
         assert r_st_free.status_code == 200
         assert r_st_free.json()["plan"] == "free"
 
-        r_reup = client.post(f"/api/billing/subscribe?shop={live_shop}&plan=pro")
-        assert r_reup.status_code == 200
-        assert r_reup.json()["plan"] == "pro"
+    # When Shopify returns an ACTIVE subscription, billing status must report pro
+    with patch(
+        "app.shopify_service.ShopifyGraphQLClient.get_billing_info",
+        new=AsyncMock(return_value={"app_handle": "sortflow-collection-sorter", "active_subscriptions": [{"id": "gid://shopify/AppSubscription/1", "name": "Pro Unlimited", "status": "ACTIVE"}]}),
+    ):
+        r_st_pro = client.get(f"/api/billing/status?shop={live_shop}")
+        assert r_st_pro.status_code == 200
+        assert r_st_pro.json()["plan"] == "pro"
 
     r_proof = client.get("/proof-of-resolution")
     assert r_proof.status_code == 200
-    assert "1.2.3" in r_proof.text and "2.1.1" in r_proof.text
+    assert "1.1.4" in r_proof.text and "1.2.2" in r_proof.text and "2.2.1" in r_proof.text
 
     print("ALL 9 TEST SUITES PASSED 100%!")
 

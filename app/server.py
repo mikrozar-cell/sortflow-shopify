@@ -433,20 +433,25 @@ async def proof_of_resolution_page() -> HTMLResponse:
   <p><strong>App:</strong> SortFlow Collection Sorter (Client ID: <code>563899564d55907061ba45b85b8425b9</code>)</p>
 
   <div class="card">
-    <h2>1. Issue 2.1.1 — Collection &amp; Product Loading Returns HTTP 200 (Zero HTTP 500 Errors)</h2>
+    <h2>1. Issues 1.1.4 &amp; 2.2.1 — 100% Live Shopify Store Data Only (Zero Sample/Demo Data on Real Stores)</h2>
     <ul>
-      <li><span class="check">&#10003;</span> <strong>Fixed GraphQL Query Cost Limit (<code>MAX_COST_EXCEEDED</code>):</strong> Reduced per-page product fetch batch size in <code>fetch_collection_details_and_products()</code> from <code>250</code> to <code>50</code>, keeping Shopify GraphQL query cost well under Shopify's 1,000-point limit.</li>
-      <li><span class="check">&#10003;</span> <strong>Multi-Stage GraphQL + REST Fallbacks:</strong> Added minimal GraphQL fallback and Shopify Admin REST API fallback (<code>custom_collections.json</code>, <code>smart_collections.json</code>, <code>collections/{id}/products.json</code>) in <code>ShopifyGraphQLClient</code>.</li>
-      <li><span class="check">&#10003;</span> <strong>Full Exception Guards on All Endpoints:</strong> Wrapped all live Shopify API calls and token-exchange retries in <code>/api/collections</code>, <code>/api/collections/{id}/products</code>, <code>/save</code>, and <code>/restore-snapshot</code> with <code>try...except</code> and graceful per-session fallback so HTTP 500 never occurs.</li>
+      <li><span class="check">&#10003;</span> <strong>Disabled Demo Collection Fallback for Real Stores:</strong> Removed all sample/demo collection fallbacks (such as <code>Summer Essentials 2026</code>) for any <code>*.myshopify.com</code> domain. Real stores strictly display collections and products fetched live from Shopify Admin API.</li>
+      <li><span class="check">&#10003;</span> <strong>Clean Empty State &amp; Auth Handling:</strong> If a real store has no collections yet, an empty state prompts the merchant to create one in Shopify Admin. If a token is missing or expired (e.g. after reinstall), the API returns <code>401</code> so OAuth/Token Exchange re-authorizes cleanly.</li>
     </ul>
   </div>
 
   <div class="card">
-    <h2>2. Issue 1.2.3 — Self-Service Pricing Plan Changes (Upgrade &amp; Downgrade)</h2>
+    <h2>2. Issues 1.2.2 &amp; 1.2.3 — Shopify App Pricing / Billing API Lifecycle &amp; Plan Changes</h2>
     <ul>
-      <li><span class="check">&#10003;</span> <strong>Self-Service Plan Switcher Modal:</strong> Added an in-app <strong>Plans &amp; Billing</strong> modal accessible directly from the top navigation bar (<code>Change Plan</code> / <code>Pro Unlimited ($9.99/mo)</code>).</li>
-      <li><span class="check">&#10003;</span> <strong>Full Upgrade &amp; Downgrade Lifecycle:</strong> Merchants can self-serve upgrading to <strong>Pro Unlimited ($9.99/mo, 14-day free trial)</strong> via <code>POST /api/billing/subscribe</code> (<code>appSubscriptionCreate</code>) or downgrading to <strong>Free Starter ($0/mo)</strong> via <code>POST /api/billing/downgrade</code> (<code>appSubscriptionCancel</code>) without contacting support or reinstalling.</li>
-      <li><span class="check">&#10003;</span> <strong>Managed Pricing &amp; Error Resilience:</strong> Handled Shopify's Managed Pricing restriction cleanly inside <code>POST /api/billing/subscribe</code>, returning HTTP 200 with self-service activation and Shopify Hosted Pricing URL instead of HTTP 500.</li>
+      <li><span class="check">&#10003;</span> <strong>Live Subscription Verification on Every Load &amp; Reinstall:</strong> <code>GET /api/billing/status</code> and <code>GET /api/collections</code> query Shopify's <code>currentAppInstallation.activeSubscriptions</code>. Upon uninstall/reinstall (when no active subscription exists), the app defaults strictly to <strong>Free Starter ($0/mo)</strong> instead of showing Pro as active.</li>
+      <li><span class="check">&#10003;</span> <strong>Native Shopify Approval, Decline &amp; Cancellation Flow:</strong> Upgrading or downgrading routes through Shopify's Billing API confirmation URL or Shopify Managed Pricing's hosted plan page (<code>/charges/{app_handle}/pricing_plans</code>) so merchants can accept, decline, cancel, upgrade, or downgrade cleanly, and shows active subscription status &amp; renewal/expiration details.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>3. Issue 2.1.1 — Zero HTTP 500 Errors</h2>
+    <ul>
+      <li><span class="check">&#10003;</span> <strong>GraphQL Cost Limit &amp; Multi-Stage Fallbacks:</strong> Reduced product fetch batch size from <code>250</code> to <code>50</code> (well under Shopify's 1,000-point limit) and added minimal GraphQL + Admin REST API fallbacks with full exception guards.</li>
     </ul>
   </div>
 
@@ -604,6 +609,34 @@ def _build_demo_collections_list(shop: str, session_id: str) -> List[Dict[str, A
     return collections
 
 
+def _is_auth_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "401" in msg or "403" in msg or "unauthorized" in msg or "access denied" in msg
+
+
+async def _resolve_live_plan(shop: str, client: ShopifyGraphQLClient) -> Dict[str, Any]:
+    """Queries Shopify currentAppInstallation.activeSubscriptions so plan state always reflects real Shopify billing."""
+    try:
+        info = await client.get_billing_info()
+        all_subs = info.get("active_subscriptions") or []
+        active_subs = [s for s in all_subs if str(s.get("status", "")).upper() == "ACTIVE"]
+        app_handle = info.get("app_handle") or ""
+        plan = "pro" if active_subs else "free"
+        update_shop_plan(shop, plan)
+        return {
+            "plan": plan,
+            "active_subscriptions": active_subs,
+            "app_handle": app_handle,
+        }
+    except Exception:
+        update_shop_plan(shop, "free")
+        return {
+            "plan": "free",
+            "active_subscriptions": [],
+            "app_handle": "",
+        }
+
+
 @app.get("/api/collections")
 async def api_list_collections(
     request: Request,
@@ -618,7 +651,7 @@ async def api_list_collections(
             "shop": shop,
             "mode": "demo_sandbox",
             "session_id": session_id,
-            "plan": (sess or {}).get("plan_name", "pro"),
+            "plan": (sess or {}).get("plan_name", "free"),
             "collections": _build_demo_collections_list(shop, session_id),
         }
 
@@ -630,44 +663,48 @@ async def api_list_collections(
         )
 
     collections: Optional[List[Dict[str, Any]]] = None
-    last_error: Optional[str] = None
+    last_exc: Optional[Exception] = None
     client = ShopifyGraphQLClient(shop, session["access_token"])
     try:
         collections = await client.list_collections(limit=50)
     except Exception as exc:
-        last_error = str(exc)
+        last_exc = exc
         refreshed = await resolve_shop_session(shop, request=request, id_token_param=id_token, force_refresh=True)
         if refreshed and refreshed.get("access_token"):
             session = refreshed
             client = ShopifyGraphQLClient(shop, session["access_token"])
             try:
                 collections = await client.list_collections(limit=50)
-                last_error = None
+                last_exc = None
             except Exception as exc2:
-                last_error = str(exc2)
+                last_exc = exc2
 
     if collections is None:
-        return {
-            "shop": shop,
-            "mode": "live_fallback",
-            "session_id": session_id,
-            "plan": session.get("plan_name", "pro"),
-            "auth_url": f"/auth?shop={urllib.parse.quote(shop)}",
-            "warning": last_error or "Unable to query live Shopify collections; loaded interactive store catalog.",
-            "collections": _build_demo_collections_list(shop, session_id),
-        }
+        if last_exc and _is_auth_error(last_exc):
+            raise HTTPException(
+                status_code=401,
+                detail={"error": "unauthorized", "auth_url": f"/auth?shop={urllib.parse.quote(shop)}"},
+            )
+        collections = []
+
+    billing_state = await _resolve_live_plan(shop, client)
 
     for col in collections:
         rule = get_collection_rule(shop, col["id"])
         col["auto_demote_oos"] = bool(rule["auto_demote_oos"])
         col["restore_on_restock"] = bool(rule["restore_on_restock"])
         col["last_sorted_at"] = rule.get("last_sorted_at")
-    return {
+    resp: Dict[str, Any] = {
         "shop": shop,
         "mode": "live_shopify",
-        "plan": session.get("plan_name", "pro"),
+        "plan": billing_state["plan"],
+        "active_subscriptions": billing_state["active_subscriptions"],
+        "managed_pricing_url": _build_managed_pricing_url(shop, billing_state["app_handle"]),
         "collections": collections,
     }
+    if last_exc is not None:
+        resp["warning"] = str(last_exc)
+    return resp
 
 
 @app.get("/api/collections/{collection_id}/products")
@@ -701,42 +738,46 @@ async def api_get_collection_products(
                 detail={"error": "unauthorized", "auth_url": f"/auth?shop={urllib.parse.quote(shop)}"},
             )
 
-        if collection_id in DEMO_COLLECTIONS:
-            collection_meta = copy.deepcopy(DEMO_COLLECTIONS[collection_id])
-            demo_state = get_demo_products_state(f"{shop}::{session_id}")
-            raw_products = copy.deepcopy(demo_state.get(collection_id, []))
-        else:
-            collection_meta = None
-            raw_products = None
-            client = ShopifyGraphQLClient(shop, session["access_token"])
-            try:
-                if hasattr(client, "fetch_collection_details_and_products"):
-                    collection_meta, raw_products = await client.fetch_collection_details_and_products(collection_id)
-                else:
-                    raw_products = await client.fetch_collection_products(collection_id)
-                    collection_meta = {"id": collection_id, "title": f"Collection #{collection_id}", "sortOrder": "MANUAL"}
-            except Exception as exc:
-                warning_msg = str(exc)
-                refreshed = await resolve_shop_session(shop, request=request, id_token_param=id_token, force_refresh=True)
-                if refreshed and refreshed.get("access_token"):
-                    client = ShopifyGraphQLClient(shop, refreshed["access_token"])
-                    try:
-                        if hasattr(client, "fetch_collection_details_and_products"):
-                            collection_meta, raw_products = await client.fetch_collection_details_and_products(collection_id)
-                        else:
-                            raw_products = await client.fetch_collection_products(collection_id)
-                            collection_meta = {"id": collection_id, "title": f"Collection #{collection_id}", "sortOrder": "MANUAL"}
-                        warning_msg = None
-                    except Exception as exc2:
-                        warning_msg = str(exc2)
+        collection_meta = None
+        raw_products = None
+        last_exc: Optional[Exception] = None
+        client = ShopifyGraphQLClient(shop, session["access_token"])
+        try:
+            if hasattr(client, "fetch_collection_details_and_products"):
+                collection_meta, raw_products = await client.fetch_collection_details_and_products(collection_id)
+            else:
+                raw_products = await client.fetch_collection_products(collection_id)
+                collection_meta = {"id": collection_id, "title": f"Collection #{collection_id}", "sortOrder": "MANUAL"}
+        except Exception as exc:
+            last_exc = exc
+            warning_msg = str(exc)
+            refreshed = await resolve_shop_session(shop, request=request, id_token_param=id_token, force_refresh=True)
+            if refreshed and refreshed.get("access_token"):
+                client = ShopifyGraphQLClient(shop, refreshed["access_token"])
+                try:
+                    if hasattr(client, "fetch_collection_details_and_products"):
+                        collection_meta, raw_products = await client.fetch_collection_details_and_products(collection_id)
+                    else:
+                        raw_products = await client.fetch_collection_products(collection_id)
+                        collection_meta = {"id": collection_id, "title": f"Collection #{collection_id}", "sortOrder": "MANUAL"}
+                    warning_msg = None
+                    last_exc = None
+                except Exception as exc2:
+                    last_exc = exc2
+                    warning_msg = str(exc2)
 
-            if raw_products is None or collection_meta is None:
-                collection_meta = {
-                    "id": collection_id,
-                    "title": f"Collection #{collection_id}",
-                    "sortOrder": "MANUAL",
-                }
-                raw_products = []
+        if raw_products is None or collection_meta is None:
+            if last_exc and _is_auth_error(last_exc):
+                raise HTTPException(
+                    status_code=401,
+                    detail={"error": "unauthorized", "auth_url": f"/auth?shop={urllib.parse.quote(shop)}"},
+                )
+            collection_meta = {
+                "id": collection_id,
+                "title": f"Collection #{collection_id}",
+                "sortOrder": "MANUAL",
+            }
+            raw_products = []
 
     # Compute effective deterministic order
     ordered_products, updated_positions = compute_final_order(
@@ -786,8 +827,7 @@ async def api_save_collection_order(
     existing_positions = get_product_positions(shop, collection_id)
 
     sort_order_fixed = False
-    is_fallback_collection = (shop != DEMO_SHOP) and (collection_id in DEMO_COLLECTIONS)
-    state_key = session_id if shop == DEMO_SHOP else f"{shop}::{session_id}"
+    state_key = session_id
 
     if shop == DEMO_SHOP:
         if collection_id not in DEMO_COLLECTIONS:
@@ -803,40 +843,36 @@ async def api_save_collection_order(
                 status_code=401,
                 detail={"error": "unauthorized", "auth_url": f"/auth?shop={urllib.parse.quote(shop)}"},
             )
-        if is_fallback_collection:
-            demo_state = get_demo_products_state(state_key)
-            raw_products = demo_state[collection_id]
-        else:
-            client = ShopifyGraphQLClient(shop, session["access_token"])
-            raw_products = None
-            try:
-                raw_products = await client.fetch_collection_products(collection_id)
-            except Exception:
-                refreshed = await resolve_shop_session(shop, request=request, id_token_param=id_token, force_refresh=True)
-                if refreshed and refreshed.get("access_token"):
-                    session = refreshed
-                    client = ShopifyGraphQLClient(shop, session["access_token"])
-                    try:
-                        raw_products = await client.fetch_collection_products(collection_id)
-                    except Exception:
-                        raw_products = None
-            if raw_products is None:
-                raw_products = [
-                    {
-                        "product_id": item.product_id,
-                        "gid": f"gid://shopify/Product/{item.product_id}",
-                        "title": f"Product {item.product_id}",
-                        "total_inventory": 1,
-                        "tracks_inventory": True,
-                        "is_in_stock": True,
-                        "is_pinned": item.is_pinned,
-                    }
-                    for item in payload.items
-                ]
-            try:
-                sort_order_fixed = await client.ensure_manual_sort_order(collection_id)
-            except Exception:
-                sort_order_fixed = False
+        client = ShopifyGraphQLClient(shop, session["access_token"])
+        raw_products = None
+        try:
+            raw_products = await client.fetch_collection_products(collection_id)
+        except Exception:
+            refreshed = await resolve_shop_session(shop, request=request, id_token_param=id_token, force_refresh=True)
+            if refreshed and refreshed.get("access_token"):
+                session = refreshed
+                client = ShopifyGraphQLClient(shop, session["access_token"])
+                try:
+                    raw_products = await client.fetch_collection_products(collection_id)
+                except Exception:
+                    raw_products = None
+        if raw_products is None:
+            raw_products = [
+                {
+                    "product_id": item.product_id,
+                    "gid": f"gid://shopify/Product/{item.product_id}",
+                    "title": f"Product {item.product_id}",
+                    "total_inventory": 1,
+                    "tracks_inventory": True,
+                    "is_in_stock": True,
+                    "is_pinned": item.is_pinned,
+                }
+                for item in payload.items
+            ]
+        try:
+            sort_order_fixed = await client.ensure_manual_sort_order(collection_id)
+        except Exception:
+            sort_order_fixed = False
 
     # Always save a full snapshot of (product_id, is_pinned) and collection rules before applying changes
     current_snapshot = {
@@ -889,7 +925,7 @@ async def api_save_collection_order(
     save_product_positions_batch(shop, collection_id, list(updated_positions.values()))
 
     # Push to demo state or live Shopify GraphQL API
-    if shop == DEMO_SHOP or not session or is_fallback_collection:
+    if shop == DEMO_SHOP or not session:
         demo_state = get_demo_products_state(state_key)
         demo_state[collection_id] = ordered_products
         sync_info = {"synced": True, "moved_count": len(ordered_products), "job_id": "demo_job_1"}
@@ -948,10 +984,9 @@ async def api_restore_snapshot(
 
     snapshot_ids: List[str] = [i["product_id"] for i in snapshot_items]
     session = await resolve_shop_session(shop, request=request, id_token_param=id_token)
-    is_fallback_collection = (shop != DEMO_SHOP) and (collection_id in DEMO_COLLECTIONS)
-    state_key = session_id if shop == DEMO_SHOP else f"{shop}::{session_id}"
+    state_key = session_id
 
-    if shop == DEMO_SHOP or not session or is_fallback_collection:
+    if shop == DEMO_SHOP or not session:
         demo_state = get_demo_products_state(state_key)
         current_items = {p["product_id"]: p for p in demo_state.get(collection_id, [])}
         restored_list: List[Dict[str, Any]] = []
@@ -1180,27 +1215,26 @@ async def api_billing_status(
     shop: str = Query(default=DEMO_SHOP),
     id_token: Optional[str] = Query(default=None),
 ) -> Dict[str, Any]:
-    """Returns current subscription plan and available upgrade/downgrade tiers."""
+    """Returns current subscription plan from Shopify activeSubscriptions and available upgrade/downgrade tiers."""
     session = await resolve_shop_session(shop, request=request, id_token_param=id_token)
-    current_plan = (session or {}).get("plan_name") or "pro"
-    active_subs: List[Dict[str, Any]] = []
-    app_handle = ""
+    if shop == DEMO_SHOP or not session or not session.get("access_token"):
+        current_plan = (session or {}).get("plan_name") or "free"
+        return {
+            "shop": shop,
+            "plan": current_plan,
+            "plans": SORTFLOW_PLANS,
+            "active_subscriptions": [],
+            "managed_pricing_url": "",
+        }
 
-    if shop != DEMO_SHOP and session and session.get("access_token"):
-        client = ShopifyGraphQLClient(shop, session["access_token"])
-        try:
-            info = await client.get_billing_info()
-            active_subs = info.get("active_subscriptions") or []
-            app_handle = info.get("app_handle") or ""
-        except Exception:
-            pass
-
+    client = ShopifyGraphQLClient(shop, session["access_token"])
+    billing_state = await _resolve_live_plan(shop, client)
     return {
         "shop": shop,
-        "plan": current_plan,
+        "plan": billing_state["plan"],
         "plans": SORTFLOW_PLANS,
-        "active_subscriptions": active_subs,
-        "managed_pricing_url": _build_managed_pricing_url(shop, app_handle),
+        "active_subscriptions": billing_state["active_subscriptions"],
+        "managed_pricing_url": _build_managed_pricing_url(shop, billing_state["app_handle"]),
     }
 
 
@@ -1210,37 +1244,51 @@ async def api_downgrade_subscription(
     shop: str = Query(default=DEMO_SHOP),
     id_token: Optional[str] = Query(default=None),
 ) -> Dict[str, Any]:
-    """Self-service downgrade to Free Starter ($0/mo) and cancels active Shopify subscriptions."""
+    """Self-service downgrade to Free Starter ($0/mo) via Billing API cancellation or Shopify Managed Pricing."""
     session = await resolve_shop_session(shop, request=request, id_token_param=id_token)
-    cancelled_ids: List[str] = []
-    app_handle = ""
+    if shop == DEMO_SHOP or not session or not session.get("access_token"):
+        update_shop_plan(shop, "free")
+        return {
+            "status": "downgraded",
+            "mode": "demo_sandbox",
+            "plan": "free",
+            "plan_label": "Free Starter ($0/mo)",
+            "cancelled_subscriptions": [],
+            "managed_pricing_url": "",
+        }
 
-    if shop != DEMO_SHOP and session and session.get("access_token"):
-        client = ShopifyGraphQLClient(shop, session["access_token"])
-        try:
-            cancelled_ids = await client.cancel_active_subscriptions()
-        except Exception:
-            refreshed = await resolve_shop_session(shop, request=request, id_token_param=id_token, force_refresh=True)
-            if refreshed and refreshed.get("access_token"):
-                client = ShopifyGraphQLClient(shop, refreshed["access_token"])
-                try:
-                    cancelled_ids = await client.cancel_active_subscriptions()
-                except Exception:
-                    cancelled_ids = []
-        try:
-            info = await client.get_billing_info()
-            app_handle = info.get("app_handle") or ""
-        except Exception:
-            pass
+    client = ShopifyGraphQLClient(shop, session["access_token"])
+    cancelled_ids: List[str] = []
+    try:
+        cancelled_ids = await client.cancel_active_subscriptions()
+    except Exception:
+        refreshed = await resolve_shop_session(shop, request=request, id_token_param=id_token, force_refresh=True)
+        if refreshed and refreshed.get("access_token"):
+            client = ShopifyGraphQLClient(shop, refreshed["access_token"])
+            try:
+                cancelled_ids = await client.cancel_active_subscriptions()
+            except Exception:
+                cancelled_ids = []
+
+    billing_state = await _resolve_live_plan(shop, client)
+    managed_url = _build_managed_pricing_url(shop, billing_state["app_handle"])
+    if billing_state["plan"] == "pro" and not cancelled_ids and managed_url:
+        return {
+            "status": "redirect",
+            "mode": "managed_pricing",
+            "plan": "pro",
+            "confirmation_url": managed_url,
+            "managed_pricing_url": managed_url,
+        }
 
     update_shop_plan(shop, "free")
     return {
         "status": "downgraded",
-        "mode": "demo_sandbox" if shop == DEMO_SHOP else "live_shopify",
+        "mode": "live_shopify",
         "plan": "free",
         "plan_label": "Free Starter ($0/mo)",
         "cancelled_subscriptions": cancelled_ids,
-        "managed_pricing_url": _build_managed_pricing_url(shop, app_handle),
+        "managed_pricing_url": managed_url,
     }
 
 
@@ -1297,26 +1345,20 @@ async def api_create_subscription(
             "confirmation_url": confirmation_url,
         }
 
-    # Handle Managed Pricing apps (where appSubscriptionCreate is disallowed by Shopify)
-    # or userErrors gracefully without ever returning HTTP 500
-    app_handle = ""
-    try:
-        info = await client.get_billing_info()
-        app_handle = info.get("app_handle") or ""
-    except Exception:
-        pass
-
-    update_shop_plan(shop, "pro")
+    # For Managed Pricing apps, redirect merchant to Shopify's Hosted Pricing Page
+    # so Shopify handles approval/decline/cancellation natively without faking active plan state.
+    billing_state = await _resolve_live_plan(shop, client)
+    managed_url = _build_managed_pricing_url(shop, billing_state["app_handle"])
     err_msg = last_error or ("; ".join(str(e.get("message", "")) for e in user_errors) if user_errors else "")
     return {
-        "status": "activated",
-        "mode": "managed_or_self_serve",
-        "plan": "pro",
+        "status": "redirect",
+        "mode": "managed_pricing",
+        "plan": billing_state["plan"],
         "plan_label": "SortFlow Pro Unlimited ($9.99/mo, 14-day trial)",
         "subscription": sub,
-        "confirmation_url": None,
-        "managed_pricing_url": _build_managed_pricing_url(shop, app_handle),
-        "billing_note": err_msg or "Self-service Pro plan activated.",
+        "confirmation_url": managed_url,
+        "managed_pricing_url": managed_url,
+        "billing_note": err_msg or "Redirecting to Shopify Hosted Pricing page.",
     }
 
 
