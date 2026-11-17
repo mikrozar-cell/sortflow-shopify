@@ -652,6 +652,7 @@ async def api_list_collections(
             "mode": "demo_sandbox",
             "session_id": session_id,
             "plan": (sess or {}).get("plan_name", "free"),
+            "app_handle": "sortflow-collection-sorter",
             "collections": _build_demo_collections_list(shop, session_id),
         }
 
@@ -698,6 +699,7 @@ async def api_list_collections(
         "shop": shop,
         "mode": "live_shopify",
         "plan": billing_state["plan"],
+        "app_handle": billing_state["app_handle"] or "sortflow-collection-sorter",
         "active_subscriptions": billing_state["active_subscriptions"],
         "managed_pricing_url": _build_managed_pricing_url(shop, billing_state["app_handle"]),
         "collections": collections,

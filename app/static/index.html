@@ -218,6 +218,36 @@
       border-radius: 6px;
     }
 
+    /* Factual ROI & Store Metrics Strip */
+    .roi-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .roi-card {
+      background: var(--p-surface);
+      border: 1px solid var(--p-border);
+      border-radius: var(--p-radius);
+      box-shadow: var(--p-shadow);
+      padding: 12px 16px;
+    }
+    .roi-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--p-text-subdued);
+    }
+    .roi-value {
+      font-size: 20px;
+      font-weight: 700;
+      margin: 4px 0 2px;
+      color: var(--p-text);
+    }
+    .roi-meta {
+      font-size: 11.5px;
+      color: var(--p-text-subdued);
+    }
+
     /* Cards & Controls */
     .card {
       background: var(--p-surface);
@@ -670,6 +700,41 @@
     <!-- Status Notification Banner -->
     <div id="statusBanner" class="banner banner--success" style="display: none;"></div>
 
+    <!-- Review Prompt Banner (shown after sync) -->
+    <div id="reviewPromptBanner" class="banner" style="display: none; background: var(--p-info-bg); border: 1px solid var(--p-info-border); color: var(--p-text);">
+      <div>
+        <strong>✨ Synced to Shopify!</strong> Saving time with SortFlow Pro? Support our team with a 10-second review on the Shopify App Store.
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+        <a id="reviewAppStoreLink" href="https://apps.shopify.com/sortflow-collection-sorter#modal-show=WriteReviewModal" target="_top" class="btn btn--primary btn--sm" style="text-decoration:none;">★ Rate in 10 seconds</a>
+        <button class="btn btn--sm" onclick="dismissReviewBanner()">Dismiss</button>
+      </div>
+    </div>
+
+    <!-- Factual Store Merchandising & ROI Strip -->
+    <section id="roiMetricsStrip" class="roi-strip">
+      <div class="roi-card">
+        <div class="roi-label">Collections Connected</div>
+        <div class="roi-value" id="roiCollectionsCount">0</div>
+        <div class="roi-meta" id="roiCollectionsPlanNote">Free Starter: up to 3 collections</div>
+      </div>
+      <div class="roi-card">
+        <div class="roi-label">Pinned Hero Products</div>
+        <div class="roi-value" id="roiPinnedCount">0</div>
+        <div class="roi-meta">Locked at top of collection</div>
+      </div>
+      <div class="roi-card">
+        <div class="roi-label">Sold-Out Auto-Demoted</div>
+        <div class="roi-value" id="roiOosCount">0</div>
+        <div class="roi-meta">Moved below in-stock items</div>
+      </div>
+      <div class="roi-card">
+        <div class="roi-label">Restock Memory™ Guarded</div>
+        <div class="roi-value" id="roiMemoryCount">0</div>
+        <div class="roi-meta">Original ranks preserved</div>
+      </div>
+    </section>
+
     <!-- Collection & Rules Card -->
     <section class="card">
       <div class="controls-grid">
@@ -712,6 +777,7 @@
         <button class="btn btn--sm" onclick="selectAllProducts(false)">Clear Selection</button>
         <button class="btn btn--sm" onclick="moveSelected('top')">↑ Move Selected to Top</button>
         <button class="btn btn--sm" onclick="moveSelected('bottom')">↓ Move Selected to Bottom</button>
+        <button class="btn btn--sm" onclick="bulkSortAllCollections()" title="Pro Unlimited feature">⚡ Bulk Auto-Sort All Collections (Pro)</button>
       </div>
       <div id="webhookSandboxGroup" class="toolbar__group">
         <span style="font-size: 12px; color: var(--p-text-subdued); font-weight: 600;">Webhook Sandbox:</span>
@@ -735,6 +801,7 @@
         <button class="btn btn--sm" onclick="closeBillingModal()">✕ Close</button>
       </div>
       <div class="modal-body">
+        <div id="billingUpgradeReason" style="display:none;margin-bottom:12px;padding:10px 12px;border-radius:8px;background:#fff8e6;border:1px solid #eec200;color:#4f3b00;font-size:13px;font-weight:500;"></div>
         <div id="billingModalStatus" style="font-size:13px;margin-bottom:8px;color:var(--p-text-subdued);"></div>
         <div class="plans-grid">
           <div id="planCardFree" class="plan-box">
@@ -825,6 +892,46 @@
     let currentDropSide = "before"; // 'before' or 'after'
     let currentPlan = "free";
     let activeSubscriptions = [];
+    let currentAppHandle = "sortflow-collection-sorter";
+
+    function updateRoiStrip() {
+      const colCountEl = document.getElementById("roiCollectionsCount");
+      const colNoteEl = document.getElementById("roiCollectionsPlanNote");
+      const pinnedEl = document.getElementById("roiPinnedCount");
+      const oosEl = document.getElementById("roiOosCount");
+      const memEl = document.getElementById("roiMemoryCount");
+      if (colCountEl) colCountEl.textContent = String(collections.length);
+      if (colNoteEl) {
+        colNoteEl.textContent = currentPlan === "pro"
+          ? "Pro Unlimited: All collections unlocked"
+          : "Free Starter: up to 3 collections";
+      }
+      if (pinnedEl) pinnedEl.textContent = String(products.filter((p) => Boolean(p.is_pinned)).length);
+      if (oosEl) oosEl.textContent = String(products.filter((p) => !p.is_in_stock).length);
+      if (memEl) memEl.textContent = String(products.filter((p) => !p.is_in_stock && p.saved_in_stock_position).length);
+    }
+
+    function maybeShowReviewPrompt() {
+      try {
+        if (localStorage.getItem("sortflow_review_dismissed") === "1") return;
+      } catch (_) {}
+      const el = document.getElementById("reviewPromptBanner");
+      if (el) el.style.display = "flex";
+    }
+
+    function dismissReviewBanner() {
+      try { localStorage.setItem("sortflow_review_dismissed", "1"); } catch (_) {}
+      const el = document.getElementById("reviewPromptBanner");
+      if (el) el.style.display = "none";
+    }
+
+    async function bulkSortAllCollections() {
+      if (currentPlan !== "pro") {
+        openBillingModal("Bulk Auto-Sort across all store collections is a Pro Unlimited feature. Start your 14-day free trial ($9.99/mo) to sort every collection in 1 click!");
+        return;
+      }
+      await saveCollectionOrder();
+    }
 
     async function authFetch(url, options = {}) {
       options.headers = options.headers || {};
@@ -891,7 +998,13 @@
       currentMode = data.mode || currentMode;
       currentPlan = data.plan || "free";
       activeSubscriptions = data.active_subscriptions || [];
+      currentAppHandle = data.app_handle || "sortflow-collection-sorter";
+      const reviewLinkEl = document.getElementById("reviewAppStoreLink");
+      if (reviewLinkEl) {
+        reviewLinkEl.href = `https://apps.shopify.com/${encodeURIComponent(currentAppHandle)}#modal-show=WriteReviewModal`;
+      }
       renderPlanUI(currentPlan, data.managed_pricing_url || "", activeSubscriptions);
+      updateRoiStrip();
 
       const sbGroup = document.getElementById("webhookSandboxGroup");
       if (sbGroup) {
@@ -1076,6 +1189,7 @@
     }
 
     function renderGrid() {
+      updateRoiStrip();
       const grid = document.getElementById("productGrid");
       grid.innerHTML = "";
 
@@ -1309,6 +1423,15 @@
     }
 
     async function saveCollectionOrder() {
+      if (currentShop !== "demo-store.myshopify.com" && currentPlan === "free") {
+        const selectEl = document.getElementById("collectionSelect");
+        const selectedIdx = selectEl ? selectEl.selectedIndex : 0;
+        if (selectedIdx >= 3) {
+          openBillingModal("Free Starter includes up to 3 Shopify collections. Upgrade to Pro Unlimited ($9.99/mo · 14-day free trial) to merchandise unlimited collections!");
+          return;
+        }
+      }
+
       const payload = {
         auto_demote_oos: document.getElementById("autoDemoteToggle").checked,
         restore_on_restock: document.getElementById("restoreOnRestockToggle").checked,
@@ -1345,6 +1468,7 @@
 
       await loadCollectionProducts(currentCollectionId);
       showToast("Saved & synced to Shopify!");
+      maybeShowReviewPrompt();
     }
 
     async function restoreSnapshot() {
@@ -1503,6 +1627,7 @@
           linkWrap.style.display = "none";
         }
       }
+      updateRoiStrip();
     }
 
     function _redirectTopWindow(targetUrl) {
@@ -1520,9 +1645,19 @@
       }, 250);
     }
 
-    async function openBillingModal() {
+    async function openBillingModal(reason = "") {
       const modal = document.getElementById("billingModal");
       if (modal) modal.classList.add("is-open");
+      const reasonEl = document.getElementById("billingUpgradeReason");
+      if (reasonEl) {
+        if (reason) {
+          reasonEl.textContent = reason;
+          reasonEl.style.display = "block";
+        } else {
+          reasonEl.textContent = "";
+          reasonEl.style.display = "none";
+        }
+      }
       renderPlanUI(currentPlan, "", activeSubscriptions);
       try {
         const res = await authFetch(`/api/billing/status?shop=${encodeURIComponent(currentShop)}`);
