@@ -137,12 +137,13 @@ def compute_final_order(
 
 
 class ShopifyGraphQLClient:
-    """Async GraphQL client for Shopify Admin API (2025-10)."""
+    """Async GraphQL & REST client for Shopify Admin API (2025-01)."""
 
     def __init__(self, shop_domain: str, access_token: str) -> None:
         self.shop_domain = shop_domain
         self.access_token = access_token
         self.endpoint = f"https://{shop_domain}/admin/api/{API_VERSION}/graphql.json"
+        self.rest_base = f"https://{shop_domain}/admin/api/{API_VERSION}"
 
     async def execute(self, query: str, variables: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         headers = {
@@ -161,8 +162,22 @@ class ShopifyGraphQLClient:
                 raise RuntimeError(f"Shopify GraphQL error: {payload['errors']}")
             return payload.get("data", {})
 
+    async def rest_get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        headers = {
+            "X-Shopify-Access-Token": self.access_token,
+            "Accept": "application/json",
+        }
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{self.rest_base}/{path.lstrip('/')}",
+                params=params or {},
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+
     async def list_collections(self, limit: int = 50) -> List[Dict[str, Any]]:
-        query = """
+        primary_query = """
         query ListCollections($first: Int!) {
           collections(first: $first) {
             nodes {
@@ -177,25 +192,105 @@ class ShopifyGraphQLClient:
           }
         }
         """
-        data = await self.execute(query, {"first": limit})
-        nodes = data.get("collections", {}).get("nodes", [])
-        return [
-            {
-                "id": n["id"].split("/")[-1],
-                "gid": n["id"],
-                "title": n["title"],
-                "handle": n.get("handle", ""),
-                "sortOrder": n.get("sortOrder", "MANUAL"),
-                "productsCount": (n.get("productsCount") or {}).get("count", 0),
+        try:
+            data = await self.execute(primary_query, {"first": limit})
+            nodes = (data.get("collections") or {}).get("nodes") or []
+            return [
+                {
+                    "id": n["id"].split("/")[-1],
+                    "gid": n["id"],
+                    "title": n["title"],
+                    "handle": n.get("handle", ""),
+                    "sortOrder": n.get("sortOrder", "MANUAL"),
+                    "productsCount": (n.get("productsCount") or {}).get("count", 0),
+                }
+                for n in nodes
+            ]
+        except Exception:
+            pass
+
+        minimal_query = """
+        query ListCollectionsMinimal($first: Int!) {
+          collections(first: $first) {
+            nodes {
+              id
+              title
+              handle
+              sortOrder
             }
-            for n in nodes
-        ]
+          }
+        }
+        """
+        try:
+            data = await self.execute(minimal_query, {"first": limit})
+            nodes = (data.get("collections") or {}).get("nodes") or []
+            return [
+                {
+                    "id": n["id"].split("/")[-1],
+                    "gid": n["id"],
+                    "title": n["title"],
+                    "handle": n.get("handle", ""),
+                    "sortOrder": n.get("sortOrder", "MANUAL"),
+                    "productsCount": 0,
+                }
+                for n in nodes
+            ]
+        except Exception:
+            pass
+
+        # Fallback to Shopify Admin REST API (custom + smart collections)
+        custom_res = await self.rest_get("custom_collections.json", {"limit": min(limit, 50)})
+        smart_res = await self.rest_get("smart_collections.json", {"limit": min(limit, 50)})
+        combined = (custom_res.get("custom_collections") or []) + (smart_res.get("smart_collections") or [])
+        out: List[Dict[str, Any]] = []
+        for c in combined[:limit]:
+            cid = str(c["id"])
+            out.append(
+                {
+                    "id": cid,
+                    "gid": f"gid://shopify/Collection/{cid}",
+                    "title": c.get("title") or f"Collection #{cid}",
+                    "handle": c.get("handle", ""),
+                    "sortOrder": str(c.get("sort_order") or "manual").upper().replace("-", "_"),
+                    "productsCount": int(c.get("products_count") or 0),
+                }
+            )
+        return out
+
+    def _normalize_graphql_products(self, nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        result: List[Dict[str, Any]] = []
+        for idx, n in enumerate(nodes):
+            inv = int(n.get("totalInventory") or 0)
+            tracks = bool(n.get("tracksInventory", True))
+            img_url = (n.get("featuredImage") or {}).get("url") or ""
+            var_nodes = (n.get("variants") or {}).get("nodes") or []
+            first_var = var_nodes[0] if var_nodes else {}
+            price = first_var.get("price") or ""
+            sku = first_var.get("sku") or ""
+            result.append(
+                {
+                    "product_id": n["id"].split("/")[-1],
+                    "gid": n["id"],
+                    "title": n.get("title") or "Untitled Product",
+                    "handle": n.get("handle", ""),
+                    "status": n.get("status", "ACTIVE"),
+                    "total_inventory": inv,
+                    "tracks_inventory": tracks,
+                    "is_in_stock": (inv > 0) or (not tracks),
+                    "price": price,
+                    "sku": sku,
+                    "image_url": img_url,
+                    "shopify_rank": idx + 1,
+                }
+            )
+        return result
 
     async def fetch_collection_details_and_products(
-        self, collection_id: str, first: int = 250
+        self, collection_id: str, first: int = 50
     ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+        safe_first = max(1, min(int(first), 50))
         gid = collection_id if collection_id.startswith("gid://") else f"gid://shopify/Collection/{collection_id}"
-        query = """
+        primary_query = """
         query GetCollectionProducts($id: ID!, $first: Int!) {
           collection(id: $id) {
             id
@@ -224,44 +319,95 @@ class ShopifyGraphQLClient:
           }
         }
         """
-        data = await self.execute(query, {"id": gid, "first": first})
-        col = data.get("collection") or {}
-        col_meta = {
-            "id": (col.get("id") or gid).split("/")[-1],
-            "gid": col.get("id") or gid,
-            "title": col.get("title") or f"Collection #{collection_id}",
-            "handle": col.get("handle") or "",
-            "sortOrder": col.get("sortOrder") or "MANUAL",
+        try:
+            data = await self.execute(primary_query, {"id": gid, "first": safe_first})
+            col = data.get("collection") or {}
+            col_meta = {
+                "id": (col.get("id") or gid).split("/")[-1],
+                "gid": col.get("id") or gid,
+                "title": col.get("title") or f"Collection #{collection_id}",
+                "handle": col.get("handle") or "",
+                "sortOrder": col.get("sortOrder") or "MANUAL",
+            }
+            nodes = (col.get("products") or {}).get("nodes") or []
+            return col_meta, self._normalize_graphql_products(nodes)
+        except Exception:
+            pass
+
+        minimal_query = """
+        query GetCollectionProductsMinimal($id: ID!, $first: Int!) {
+          collection(id: $id) {
+            id
+            title
+            handle
+            sortOrder
+            products(first: $first) {
+              nodes {
+                id
+                title
+                handle
+                status
+                totalInventory
+              }
+            }
+          }
         }
-        nodes = (col.get("products") or {}).get("nodes", [])
+        """
+        try:
+            data = await self.execute(minimal_query, {"id": gid, "first": safe_first})
+            col = data.get("collection") or {}
+            col_meta = {
+                "id": (col.get("id") or gid).split("/")[-1],
+                "gid": col.get("id") or gid,
+                "title": col.get("title") or f"Collection #{collection_id}",
+                "handle": col.get("handle") or "",
+                "sortOrder": col.get("sortOrder") or "MANUAL",
+            }
+            nodes = (col.get("products") or {}).get("nodes") or []
+            return col_meta, self._normalize_graphql_products(nodes)
+        except Exception:
+            pass
+
+        # Fallback to Shopify Admin REST API
+        numeric_id = collection_id.split("/")[-1]
+        col_json = await self.rest_get(f"collections/{numeric_id}.json")
+        col_obj = col_json.get("collection") or {}
+        prods_json = await self.rest_get(f"collections/{numeric_id}/products.json", {"limit": safe_first})
+        raw_prods = prods_json.get("products") or []
+        col_meta = {
+            "id": str(col_obj.get("id") or numeric_id),
+            "gid": f"gid://shopify/Collection/{numeric_id}",
+            "title": col_obj.get("title") or f"Collection #{numeric_id}",
+            "handle": col_obj.get("handle") or "",
+            "sortOrder": str(col_obj.get("sort_order") or "manual").upper().replace("-", "_"),
+        }
         result: List[Dict[str, Any]] = []
-        for idx, n in enumerate(nodes):
-            inv = int(n.get("totalInventory") or 0)
-            tracks = bool(n.get("tracksInventory", True))
-            img_url = (n.get("featuredImage") or {}).get("url") or ""
-            var_nodes = (n.get("variants") or {}).get("nodes") or []
-            first_var = var_nodes[0] if var_nodes else {}
-            price = first_var.get("price") or ""
-            sku = first_var.get("sku") or ""
+        for idx, p in enumerate(raw_prods):
+            pid = str(p["id"])
+            variants = p.get("variants") or []
+            first_var = variants[0] if variants else {}
+            inv = sum(int(v.get("inventory_quantity") or 0) for v in variants)
+            tracks = any(v.get("inventory_management") is not None for v in variants) if variants else True
+            img_obj = p.get("image") or {}
             result.append(
                 {
-                    "product_id": n["id"].split("/")[-1],
-                    "gid": n["id"],
-                    "title": n["title"],
-                    "handle": n.get("handle", ""),
-                    "status": n.get("status", "ACTIVE"),
+                    "product_id": pid,
+                    "gid": f"gid://shopify/Product/{pid}",
+                    "title": p.get("title") or "Untitled Product",
+                    "handle": p.get("handle") or "",
+                    "status": str(p.get("status") or "active").upper(),
                     "total_inventory": inv,
                     "tracks_inventory": tracks,
                     "is_in_stock": (inv > 0) or (not tracks),
-                    "price": price,
-                    "sku": sku,
-                    "image_url": img_url,
+                    "price": str(first_var.get("price") or ""),
+                    "sku": str(first_var.get("sku") or ""),
+                    "image_url": img_obj.get("src") or "",
                     "shopify_rank": idx + 1,
                 }
             )
         return col_meta, result
 
-    async def fetch_collection_products(self, collection_id: str, first: int = 250) -> List[Dict[str, Any]]:
+    async def fetch_collection_products(self, collection_id: str, first: int = 50) -> List[Dict[str, Any]]:
         _, products = await self.fetch_collection_details_and_products(collection_id, first=first)
         return products
 
@@ -338,6 +484,31 @@ class ShopifyGraphQLClient:
             "user_errors": res.get("userErrors", []),
         }
 
+    async def get_billing_info(self) -> Dict[str, Any]:
+        query = """
+        query GetBillingInfo {
+          currentAppInstallation {
+            app {
+              handle
+            }
+            activeSubscriptions {
+              id
+              name
+              status
+              test
+              trialDays
+            }
+          }
+        }
+        """
+        data = await self.execute(query)
+        inst = data.get("currentAppInstallation") or {}
+        app_info = inst.get("app") or {}
+        return {
+            "app_handle": app_info.get("handle") or "",
+            "active_subscriptions": inst.get("activeSubscriptions") or [],
+        }
+
     async def create_recurring_subscription(
         self,
         return_url: str,
@@ -353,6 +524,7 @@ class ShopifyGraphQLClient:
             returnUrl: $returnUrl,
             trialDays: $trialDays,
             test: $test,
+            replacementBehavior: APPLY_IMMEDIATELY,
             lineItems: [{
               plan: {
                 appRecurringPricingDetails: {
@@ -385,6 +557,34 @@ class ShopifyGraphQLClient:
             },
         )
         return data.get("appSubscriptionCreate") or {}
+
+    async def cancel_active_subscriptions(self) -> List[str]:
+        info = await self.get_billing_info()
+        cancelled_ids: List[str] = []
+        mutation = """
+        mutation CancelSubscription($id: ID!) {
+          appSubscriptionCancel(id: $id) {
+            appSubscription {
+              id
+              status
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+        """
+        for sub in info.get("active_subscriptions") or []:
+            sub_id = sub.get("id")
+            if not sub_id:
+                continue
+            try:
+                await self.execute(mutation, {"id": sub_id})
+                cancelled_ids.append(sub_id)
+            except Exception:
+                continue
+        return cancelled_ids
 
 
 def verify_shopify_webhook_hmac(raw_body: bytes, hmac_header: str, client_secret: str) -> bool:

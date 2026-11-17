@@ -96,29 +96,64 @@ def upsert_shop_session(
     shop_domain: str,
     access_token: str,
     scope: str = "read_products,write_products",
-    plan_name: str = "pro",
+    plan_name: Optional[str] = None,
 ) -> None:
     now = _now_iso()
+    clean_shop = (shop_domain or "").strip().lower()
+    con = get_db()
+    if plan_name is None:
+        con.execute(
+            """
+            INSERT INTO shop_sessions (shop_domain, access_token, scope, plan_name, installed_at, updated_at)
+            VALUES (?, ?, ?, 'pro', ?, ?)
+            ON CONFLICT(shop_domain) DO UPDATE SET
+                access_token = excluded.access_token,
+                scope = excluded.scope,
+                updated_at = excluded.updated_at
+            """,
+            (clean_shop, access_token, scope, now, now),
+        )
+    else:
+        con.execute(
+            """
+            INSERT INTO shop_sessions (shop_domain, access_token, scope, plan_name, installed_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(shop_domain) DO UPDATE SET
+                access_token = excluded.access_token,
+                scope = excluded.scope,
+                plan_name = excluded.plan_name,
+                updated_at = excluded.updated_at
+            """,
+            (clean_shop, access_token, scope, plan_name, now, now),
+        )
+    con.commit()
+    con.close()
+
+
+def update_shop_plan(shop_domain: str, plan_name: str) -> None:
+    now = _now_iso()
+    clean_shop = (shop_domain or "").strip().lower()
+    if not clean_shop:
+        return
     con = get_db()
     con.execute(
         """
         INSERT INTO shop_sessions (shop_domain, access_token, scope, plan_name, installed_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (?, '', 'read_products,write_products', ?, ?, ?)
         ON CONFLICT(shop_domain) DO UPDATE SET
-            access_token = excluded.access_token,
-            scope = excluded.scope,
             plan_name = excluded.plan_name,
             updated_at = excluded.updated_at
         """,
-        (shop_domain, access_token, scope, plan_name, now, now),
+        (clean_shop, plan_name, now, now),
     )
     con.commit()
     con.close()
 
 
 def get_shop_session(shop_domain: str) -> Optional[Dict[str, Any]]:
+    clean_shop = (shop_domain or "").strip().lower()
     con = get_db()
-    row = con.execute("SELECT * FROM shop_sessions WHERE shop_domain = ?", (shop_domain,)).fetchone()
+    row = con.execute("SELECT * FROM shop_sessions WHERE shop_domain = ?", (clean_shop,)).fetchone()
     con.close()
     return dict(row) if row else None
 

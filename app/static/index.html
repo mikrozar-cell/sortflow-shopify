@@ -550,6 +550,78 @@
       z-index: 9999;
       display: none;
     }
+
+    /* Self-Service Plans & Billing Modal */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(26, 28, 29, 0.55);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 9000;
+      padding: 20px;
+    }
+    .modal-backdrop.is-open {
+      display: flex;
+    }
+    .modal-card {
+      background: #ffffff;
+      border-radius: 14px;
+      max-width: 760px;
+      width: 100%;
+      box-shadow: 0 20px 44px rgba(0, 0, 0, 0.24);
+      overflow: hidden;
+      border: 1px solid var(--p-border);
+    }
+    .modal-header {
+      padding: 16px 22px;
+      border-bottom: 1px solid var(--p-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #fafbfb;
+    }
+    .modal-header h2 {
+      font-size: 17px;
+      font-weight: 700;
+    }
+    .modal-body {
+      padding: 20px 22px;
+    }
+    .plans-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+      gap: 16px;
+      margin-top: 12px;
+    }
+    .plan-box {
+      border: 1.5px solid var(--p-border);
+      border-radius: 12px;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 14px;
+      background: #fff;
+    }
+    .plan-box.is-active {
+      border-color: var(--p-primary);
+      background: #f5fbf8;
+    }
+    .plan-box__price {
+      font-size: 24px;
+      font-weight: 800;
+      margin: 6px 0;
+    }
+    .plan-box__features {
+      list-style: none;
+      font-size: 13px;
+      color: var(--p-text-subdued);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
   </style>
 </head>
 <body>
@@ -563,7 +635,8 @@
     <div class="topbar__badges">
       <span id="modeBadge" class="badge badge--dark">Sandbox Mode</span>
       <span id="sortOrderBadge" class="badge badge--warning">Shopify Sort: BEST_SELLING</span>
-      <button id="proBillingBtn" class="btn btn--sm" onclick="subscribeProPlan()">⚡ Pro Unlimited ($9.99/mo)</button>
+      <button id="proBillingBtn" class="btn btn--sm" onclick="openBillingModal()">⚡ Pro Unlimited ($9.99/mo)</button>
+      <button id="changePlanBtn" class="btn btn--sm" onclick="openBillingModal()">Change Plan</button>
     </div>
   </header>
 
@@ -652,6 +725,59 @@
     <section id="productGrid" class="product-grid"></section>
   </main>
 
+  <div id="billingModal" class="modal-backdrop" onclick="if (event.target === this) closeBillingModal()">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <h2>Plans &amp; Billing — Self-Service Upgrade or Downgrade</h2>
+          <p style="font-size:12.5px;color:var(--p-text-subdued);margin-top:2px;">Switch plans anytime without contacting support or reinstalling the app.</p>
+        </div>
+        <button class="btn btn--sm" onclick="closeBillingModal()">✕ Close</button>
+      </div>
+      <div class="modal-body">
+        <div id="billingModalStatus" style="font-size:13px;margin-bottom:8px;color:var(--p-text-subdued);"></div>
+        <div class="plans-grid">
+          <div id="planCardFree" class="plan-box">
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <strong>Free Starter</strong>
+                <span id="planBadgeFree" class="badge badge--dark" style="display:none;">Current Plan</span>
+              </div>
+              <div class="plan-box__price">$0 <span style="font-size:13px;font-weight:500;color:var(--p-text-subdued);">/ month</span></div>
+              <ul class="plan-box__features">
+                <li>✓ Up to 3 Shopify collections</li>
+                <li>✓ Visual Drag &amp; Drop merchandising</li>
+                <li>✓ Auto-switch BEST_SELLING to MANUAL</li>
+                <li>✓ 1-Click Pre-Change Snapshot Undo</li>
+              </ul>
+            </div>
+            <button id="btnSelectFree" class="btn" onclick="downgradeToFreePlan()">Switch to Free Starter ($0/mo)</button>
+          </div>
+
+          <div id="planCardPro" class="plan-box is-active">
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <strong>Pro Unlimited</strong>
+                <span id="planBadgePro" class="badge badge--success">Current Plan</span>
+              </div>
+              <div class="plan-box__price">$9.99 <span style="font-size:13px;font-weight:500;color:var(--p-text-subdued);">/ month · 14-day free trial</span></div>
+              <ul class="plan-box__features">
+                <li>✓ Unlimited collections &amp; products</li>
+                <li>✓ Auto-Demote Out-of-Stock items</li>
+                <li>✓ Restock Memory™ exact rank restore</li>
+                <li>✓ Smart New Arrivals placement rules</li>
+              </ul>
+            </div>
+            <button id="btnSelectPro" class="btn btn--primary" onclick="subscribeProPlan()">Upgrade to Pro ($9.99/mo)</button>
+          </div>
+        </div>
+        <div id="managedPricingLinkWrap" style="margin-top:14px;font-size:12.5px;display:none;">
+          <a id="managedPricingLink" href="#" target="_top" style="color:var(--p-primary);font-weight:600;">Open Shopify Hosted Plan Management →</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast"></div>
 
   <script>
@@ -697,6 +823,7 @@
     let selectedIds = new Set();
     let draggedIndex = null;
     let currentDropSide = "before"; // 'before' or 'after'
+    let currentPlan = "pro";
 
     async function authFetch(url, options = {}) {
       options.headers = options.headers || {};
@@ -721,15 +848,19 @@
       setupGridDragListeners();
 
       if (urlParams.get("billing") === "confirmed") {
-        const proBtn = document.getElementById("proBillingBtn");
-        if (proBtn) {
-          proBtn.textContent = "✓ Pro Unlimited Active";
-          proBtn.classList.add("btn--primary");
-        }
+        currentPlan = "pro";
+        renderPlanUI("pro");
         showStatusBanner("✓ SortFlow Pro Unlimited ($9.99/mo, 14-day free trial) subscription confirmed via Shopify Billing API!");
       }
 
-      const res = await authFetch(`/api/collections?shop=${encodeURIComponent(currentShop)}&session_id=${encodeURIComponent(currentSessionId)}`);
+      let res;
+      try {
+        res = await authFetch(`/api/collections?shop=${encodeURIComponent(currentShop)}&session_id=${encodeURIComponent(currentSessionId)}`);
+      } catch (err) {
+        showToast("Network error loading collections. Please refresh.");
+        return;
+      }
+
       if (res.status === 401) {
         let authUrl = `${window.location.origin}/auth?shop=${encodeURIComponent(currentShop)}`;
         try {
@@ -748,13 +879,21 @@
         }
         return;
       }
+
+      if (!res.ok) {
+        showToast("Unable to load store collections right now. Please try again.");
+        return;
+      }
+
       const data = await res.json();
       collections = data.collections || [];
       currentMode = data.mode || currentMode;
+      currentPlan = data.plan || currentPlan;
+      renderPlanUI(currentPlan);
 
       const sbGroup = document.getElementById("webhookSandboxGroup");
       if (sbGroup) {
-        sbGroup.style.display = currentMode === "demo_sandbox" ? "flex" : "none";
+        sbGroup.style.display = (currentMode === "demo_sandbox" || currentMode === "live_fallback") ? "flex" : "none";
       }
 
       const modeBadge = document.getElementById("modeBadge");
@@ -803,11 +942,24 @@
       const selectEl = document.getElementById("collectionSelect");
       currentCollectionId = selectEl.value;
       selectedIds.clear();
-      await loadCollectionProducts(currentCollectionId);
+      if (currentCollectionId) {
+        await loadCollectionProducts(currentCollectionId);
+      }
     }
 
     async function loadCollectionProducts(collectionId) {
-      const res = await authFetch(`/api/collections/${encodeURIComponent(collectionId)}/products?shop=${encodeURIComponent(currentShop)}&session_id=${encodeURIComponent(currentSessionId)}`);
+      if (!collectionId) return;
+      let res;
+      try {
+        res = await authFetch(`/api/collections/${encodeURIComponent(collectionId)}/products?shop=${encodeURIComponent(currentShop)}&session_id=${encodeURIComponent(currentSessionId)}`);
+      } catch (err) {
+        showToast("Network error loading products.");
+        return;
+      }
+      if (!res.ok) {
+        showToast("Could not load collection products.");
+        return;
+      }
       const data = await res.json();
 
       products = data.products || [];
@@ -1174,6 +1326,10 @@
           body: JSON.stringify(payload),
         }
       );
+      if (!res.ok) {
+        showToast("Could not save collection order. Please try again.");
+        return;
+      }
       const data = await res.json();
       products = data.products || products;
 
@@ -1275,7 +1431,7 @@
         })),
       };
       await authFetch(
-        `/api/collections/${encodeURIComponent(currentCollectionId)}/save?shop=${encodeURIComponent(currentShop)}`,
+        `/api/collections/${encodeURIComponent(currentCollectionId)}/save?shop=${encodeURIComponent(currentShop)}&session_id=${encodeURIComponent(currentSessionId)}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1284,15 +1440,102 @@
       );
     }
 
+    function renderPlanUI(planName, managedPricingUrl = "") {
+      currentPlan = (planName || "pro").toLowerCase() === "free" ? "free" : "pro";
+      const topBtn = document.getElementById("proBillingBtn");
+      if (topBtn) {
+        if (currentPlan === "free") {
+          topBtn.textContent = "Plan: Free Starter ($0/mo)";
+          topBtn.classList.remove("btn--primary");
+        } else {
+          topBtn.textContent = "⚡ Pro Unlimited ($9.99/mo)";
+          topBtn.classList.add("btn--primary");
+        }
+      }
+
+      const cardFree = document.getElementById("planCardFree");
+      const cardPro = document.getElementById("planCardPro");
+      const badgeFree = document.getElementById("planBadgeFree");
+      const badgePro = document.getElementById("planBadgePro");
+      const btnFree = document.getElementById("btnSelectFree");
+      const btnPro = document.getElementById("btnSelectPro");
+
+      if (cardFree && cardPro) {
+        if (currentPlan === "free") {
+          cardFree.classList.add("is-active");
+          cardPro.classList.remove("is-active");
+          if (badgeFree) badgeFree.style.display = "inline-flex";
+          if (badgePro) badgePro.style.display = "none";
+          if (btnFree) {
+            btnFree.textContent = "✓ Current Plan (Free Starter)";
+            btnFree.disabled = true;
+          }
+          if (btnPro) {
+            btnPro.textContent = "Upgrade to Pro ($9.99/mo)";
+            btnPro.disabled = false;
+          }
+        } else {
+          cardFree.classList.remove("is-active");
+          cardPro.classList.add("is-active");
+          if (badgeFree) badgeFree.style.display = "none";
+          if (badgePro) badgePro.style.display = "inline-flex";
+          if (btnFree) {
+            btnFree.textContent = "Downgrade to Free ($0/mo)";
+            btnFree.disabled = false;
+          }
+          if (btnPro) {
+            btnPro.textContent = "✓ Current Plan (Pro Unlimited)";
+            btnPro.disabled = true;
+          }
+        }
+      }
+
+      const linkWrap = document.getElementById("managedPricingLinkWrap");
+      const linkEl = document.getElementById("managedPricingLink");
+      if (linkWrap && linkEl) {
+        if (managedPricingUrl) {
+          linkEl.href = managedPricingUrl;
+          linkWrap.style.display = "block";
+        } else {
+          linkWrap.style.display = "none";
+        }
+      }
+    }
+
+    async function openBillingModal() {
+      const modal = document.getElementById("billingModal");
+      if (modal) modal.classList.add("is-open");
+      renderPlanUI(currentPlan);
+      try {
+        const res = await authFetch(`/api/billing/status?shop=${encodeURIComponent(currentShop)}`);
+        if (res.ok) {
+          const data = await res.json();
+          renderPlanUI(data.plan || currentPlan, data.managed_pricing_url || "");
+          const statusEl = document.getElementById("billingModalStatus");
+          if (statusEl) {
+            statusEl.textContent = `Active Plan for ${data.shop}: ${currentPlan === "free" ? "Free Starter ($0/mo)" : "Pro Unlimited ($9.99/mo · 14-day trial)"}`;
+          }
+        }
+      } catch (_) {}
+    }
+
+    function closeBillingModal() {
+      const modal = document.getElementById("billingModal");
+      if (modal) modal.classList.remove("is-open");
+    }
+
     async function subscribeProPlan() {
-      const btn = document.getElementById("proBillingBtn");
-      const origText = btn ? btn.textContent : "⚡ Pro Unlimited ($9.99/mo)";
+      const btn = document.getElementById("btnSelectPro") || document.getElementById("proBillingBtn");
+      const topBtn = document.getElementById("proBillingBtn");
       if (btn) {
         btn.disabled = true;
         btn.textContent = "⏳ Connecting to Shopify Billing...";
       }
+      if (topBtn) {
+        topBtn.disabled = true;
+      }
       try {
-        const res = await authFetch(`/api/billing/subscribe?shop=${encodeURIComponent(currentShop)}`, {
+        const res = await authFetch(`/api/billing/subscribe?shop=${encodeURIComponent(currentShop)}&plan=pro`, {
           method: "POST",
         });
         const data = await res.json();
@@ -1313,19 +1556,36 @@
           }, 250);
           return;
         }
-        if (btn) {
-          btn.disabled = false;
-          btn.textContent = "✓ Pro Unlimited Active ($9.99/mo)";
-          btn.classList.add("btn--primary");
-        }
-        showStatusBanner(`💳 Shopify Billing API ready: ${data.plan || "SortFlow Pro ($9.99/mo, 14-day free trial)"}`);
-        showToast("Pro Unlimited Plan activated!");
+        renderPlanUI("pro", data.managed_pricing_url || "");
+        closeBillingModal();
+        showStatusBanner(`💳 Plan updated: ${data.plan_label || "SortFlow Pro Unlimited ($9.99/mo, 14-day free trial)"}`);
+        showToast("Upgraded to Pro Unlimited!");
       } catch (err) {
-        if (btn) {
-          btn.disabled = false;
-          btn.textContent = origText;
-        }
-        showToast("Could not initiate billing. Please try again.");
+        renderPlanUI(currentPlan);
+        showToast("Unable to update plan right now. Please try again.");
+      } finally {
+        if (topBtn) topBtn.disabled = false;
+      }
+    }
+
+    async function downgradeToFreePlan() {
+      const btn = document.getElementById("btnSelectFree");
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "⏳ Switching to Free Starter...";
+      }
+      try {
+        const res = await authFetch(`/api/billing/downgrade?shop=${encodeURIComponent(currentShop)}`, {
+          method: "POST",
+        });
+        const data = await res.json();
+        renderPlanUI("free", data.managed_pricing_url || "");
+        closeBillingModal();
+        showStatusBanner("✓ Plan downgraded to Free Starter ($0/mo). You can upgrade back to Pro anytime.");
+        showToast("Switched to Free Starter ($0/mo)");
+      } catch (err) {
+        renderPlanUI(currentPlan);
+        showToast("Unable to switch plan right now. Please try again.");
       }
     }
 

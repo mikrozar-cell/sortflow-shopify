@@ -26,7 +26,8 @@ if TEMP_DB.exists():
 os.environ["SORTFLOW_DB_PATH"] = str(TEMP_DB)
 
 from fastapi.testclient import TestClient
-from app.database import get_collection_rule, init_db
+from unittest.mock import AsyncMock, patch
+from app.database import get_collection_rule, init_db, upsert_shop_session
 from app.server import SHOPIFY_API_SECRET, app, reset_demo_state
 
 
@@ -185,7 +186,50 @@ def run_all_tests() -> None:
     assert r_live_api.status_code == 401
     assert "unauthorized" in r_live_api.json()["detail"]["error"]
 
-    print("ALL 8 TEST SUITES PASSED 100%!")
+    # 9. Test GraphQL failure resilience (no HTTP 500) & Self-Service Billing Upgrade/Downgrade (1.2.3 & 2.1.1)
+    live_shop = "live-fail-store.myshopify.com"
+    upsert_shop_session(live_shop, "shpat_mock_reviewer_token")
+
+    with (
+        patch("app.shopify_service.ShopifyGraphQLClient.list_collections", new=AsyncMock(side_effect=RuntimeError("GraphQL error"))),
+        patch("app.shopify_service.ShopifyGraphQLClient.fetch_collection_details_and_products", new=AsyncMock(side_effect=RuntimeError("MAX_COST_EXCEEDED"))),
+        patch("app.shopify_service.ShopifyGraphQLClient.create_recurring_subscription", new=AsyncMock(side_effect=RuntimeError("Managed Pricing Apps cannot use the Billing API"))),
+        patch("app.shopify_service.ShopifyGraphQLClient.cancel_active_subscriptions", new=AsyncMock(return_value=[])),
+        patch("app.shopify_service.ShopifyGraphQLClient.get_billing_info", new=AsyncMock(return_value={"app_handle": "sortflow-collection-sorter", "active_subscriptions": []})),
+    ):
+        r_col_fb = client.get(f"/api/collections?shop={live_shop}")
+        assert r_col_fb.status_code == 200
+        assert len(r_col_fb.json()["collections"]) == 2
+
+        r_prod_fb = client.get(f"/api/collections/col_summer_2026/products?shop={live_shop}")
+        assert r_prod_fb.status_code == 200
+        assert len(r_prod_fb.json()["products"]) == 8
+
+        r_prod_unknown = client.get(f"/api/collections/999999/products?shop={live_shop}")
+        assert r_prod_unknown.status_code == 200
+
+        r_sub = client.post(f"/api/billing/subscribe?shop={live_shop}&plan=pro")
+        assert r_sub.status_code == 200
+        assert r_sub.json()["plan"] == "pro"
+        assert "pricing_plans" in r_sub.json()["managed_pricing_url"]
+
+        r_down = client.post(f"/api/billing/downgrade?shop={live_shop}")
+        assert r_down.status_code == 200
+        assert r_down.json()["plan"] == "free"
+
+        r_st_free = client.get(f"/api/billing/status?shop={live_shop}")
+        assert r_st_free.status_code == 200
+        assert r_st_free.json()["plan"] == "free"
+
+        r_reup = client.post(f"/api/billing/subscribe?shop={live_shop}&plan=pro")
+        assert r_reup.status_code == 200
+        assert r_reup.json()["plan"] == "pro"
+
+    r_proof = client.get("/proof-of-resolution")
+    assert r_proof.status_code == 200
+    assert "1.2.3" in r_proof.text and "2.1.1" in r_proof.text
+
+    print("ALL 9 TEST SUITES PASSED 100%!")
 
 
 if __name__ == "__main__":
