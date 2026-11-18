@@ -186,6 +186,35 @@ def run_all_tests() -> None:
     assert r_live_api.status_code == 401
     assert "unauthorized" in r_live_api.json()["detail"]["error"]
 
+    # Embedded App Bridge requests (id_token / X-OAuth-Attempted) MUST return 200 OK, never 401 redirect loops
+    r_embedded_no_token = client.get(
+        "/api/collections?shop=secnsk-ee.myshopify.com",
+        headers={"Authorization": "Bearer dummy.jwt.token"},
+    )
+    assert r_embedded_no_token.status_code == 200
+    assert r_embedded_no_token.json()["collections"] == []
+    assert r_embedded_no_token.json()["plan"] == "free"
+
+    r_oauth_attempted = client.get(
+        "/api/collections?shop=secnsk-ee.myshopify.com",
+        headers={"X-OAuth-Attempted": "1"},
+    )
+    assert r_oauth_attempted.status_code == 200
+    assert r_oauth_attempted.json()["collections"] == []
+
+    # Simulated 403 Access Denied from GraphQL on an active shop session must NOT trigger 401 redirect loop
+    upsert_shop_session("secnsk-ee.myshopify.com", "shpat_mock_reviewer_403", "read_products,write_products")
+    with patch(
+        "app.shopify_service.ShopifyGraphQLClient.list_collections",
+        new=AsyncMock(side_effect=RuntimeError("403 Forbidden: Access denied")),
+    ):
+        r_403_resilient = client.get(
+            "/api/collections?shop=secnsk-ee.myshopify.com",
+            headers={"Authorization": "Bearer dummy.jwt.token"},
+        )
+        assert r_403_resilient.status_code == 200
+        assert r_403_resilient.json()["collections"] == []
+
     # 9. Test GraphQL failure resilience (NO fake demo data on real stores!) & Billing Lifecycle (1.1.4, 1.2.2, 2.2.1)
     live_shop = "live-fail-store.myshopify.com"
     upsert_shop_session(live_shop, "shpat_mock_reviewer_token")

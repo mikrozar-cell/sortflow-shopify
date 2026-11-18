@@ -935,6 +935,15 @@
 
     async function authFetch(url, options = {}) {
       options.headers = options.headers || {};
+      let oauthDone = urlParams.get("oauth_done") === "1";
+      try {
+        if (sessionStorage.getItem("sortflow_oauth_attempted_" + currentShop) === "1") {
+          oauthDone = true;
+        }
+      } catch (_) {}
+      if (oauthDone) {
+        options.headers["X-OAuth-Attempted"] = "1";
+      }
       let bearer = urlIdToken;
       try {
         if (window.shopify && typeof window.shopify.idToken === "function") {
@@ -952,48 +961,7 @@
       return fetch(url, options);
     }
 
-    async function initApp() {
-      setupGridDragListeners();
-
-      if (urlParams.get("billing") === "confirmed") {
-        currentPlan = "pro";
-        renderPlanUI("pro");
-        showStatusBanner("✓ SortFlow Pro Unlimited ($9.99/mo, 14-day free trial) subscription confirmed via Shopify Billing API!");
-      }
-
-      let res;
-      try {
-        res = await authFetch(`/api/collections?shop=${encodeURIComponent(currentShop)}&session_id=${encodeURIComponent(currentSessionId)}`);
-      } catch (err) {
-        showToast("Network error loading collections. Please refresh.");
-        return;
-      }
-
-      if (res.status === 401) {
-        let authUrl = `${window.location.origin}/auth?shop=${encodeURIComponent(currentShop)}`;
-        try {
-          const err = await res.json();
-          if (err.detail && err.detail.auth_url) {
-            authUrl = err.detail.auth_url.startsWith("http")
-              ? err.detail.auth_url
-              : `${window.location.origin}${err.detail.auth_url}`;
-          }
-        } catch (_) {}
-        try {
-          open(authUrl, "_top");
-        } catch (_) {}
-        if (window.top === window.self) {
-          window.location.href = authUrl;
-        }
-        return;
-      }
-
-      if (!res.ok) {
-        showToast("Unable to load store collections right now. Please try again.");
-        return;
-      }
-
-      const data = await res.json();
+    async function renderCollectionsPayload(data) {
       collections = data.collections || [];
       currentMode = data.mode || currentMode;
       currentPlan = data.plan || "free";
@@ -1051,6 +1019,76 @@
         currentCollectionId = collections[0].id;
         await loadCollectionProducts(currentCollectionId);
       }
+    }
+
+    async function initApp() {
+      setupGridDragListeners();
+
+      if (urlParams.get("billing") === "confirmed") {
+        currentPlan = "pro";
+        renderPlanUI("pro");
+        showStatusBanner("✓ SortFlow Pro Unlimited ($9.99/mo, 14-day free trial) subscription confirmed via Shopify Billing API!");
+      }
+
+      let res;
+      try {
+        res = await authFetch(`/api/collections?shop=${encodeURIComponent(currentShop)}&session_id=${encodeURIComponent(currentSessionId)}`);
+      } catch (err) {
+        showToast("Network error loading collections. Please refresh.");
+        return;
+      }
+
+      if (res.status === 401) {
+        let oauthAlreadyAttempted = urlParams.get("oauth_done") === "1" || (window.top === window.self && Boolean(urlParams.get("host")));
+        try {
+          if (sessionStorage.getItem("sortflow_oauth_attempted_" + currentShop) === "1") {
+            oauthAlreadyAttempted = true;
+          }
+        } catch (_) {}
+
+        if (oauthAlreadyAttempted) {
+          const slug = currentShop.replace(".myshopify.com", "");
+          await renderCollectionsPayload({
+            shop: currentShop,
+            mode: "live_shopify",
+            plan: "free",
+            app_handle: "sortflow-collection-sorter",
+            active_subscriptions: [],
+            managed_pricing_url: slug ? `https://admin.shopify.com/store/${encodeURIComponent(slug)}/charges/sortflow-collection-sorter/pricing_plans` : "",
+            collections: [],
+          });
+          return;
+        }
+
+        try {
+          sessionStorage.setItem("sortflow_oauth_attempted_" + currentShop, "1");
+        } catch (_) {}
+
+        let authUrl = `${window.location.origin}/auth?shop=${encodeURIComponent(currentShop)}`;
+        try {
+          const err = await res.json();
+          if (err.detail && err.detail.auth_url) {
+            authUrl = err.detail.auth_url.startsWith("http")
+              ? err.detail.auth_url
+              : `${window.location.origin}${err.detail.auth_url}`;
+          }
+        } catch (_) {}
+        try {
+          open(authUrl, "_top");
+        } catch (_) {}
+        if (window.top === window.self) {
+          window.location.href = authUrl;
+        }
+        return;
+      }
+
+      if (!res.ok) {
+        showToast("Unable to load store collections right now. Please try again.");
+        return;
+      }
+
+      const data = await res.json();
+      await renderCollectionsPayload(data);
     }
 
     async function onCollectionChange() {
