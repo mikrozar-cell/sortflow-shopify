@@ -67,34 +67,6 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Track shops that have already attempted OAuth in this server lifecycle to prevent infinite redirect loops
 _OAUTH_ATTEMPTED_SHOPS: Dict[str, float] = {}
-_KEEPALIVE_URLS = (
-    "https://sortflow-app.onrender.com/health",
-    "https://priceguard-app.onrender.com/health",
-    "https://cartlogic-app.onrender.com/health",
-)
-
-
-async def _render_keepalive_loop() -> None:
-    """Periodically pings peer health endpoints on Render to minimize free-tier cold starts."""
-    import httpx
-
-    while True:
-        await asyncio.sleep(480)
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                for target_url in _KEEPALIVE_URLS:
-                    try:
-                        await client.get(target_url)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-
-
-@app.on_event("startup")
-async def _start_render_keepalive() -> None:
-    if os.environ.get("RENDER"):
-        asyncio.create_task(_render_keepalive_loop())
 
 
 @app.get("/health")
