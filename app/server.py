@@ -49,7 +49,7 @@ import base64
 _FALLBACK_CLIENT_SECRET = base64.b64decode(b"c2hwc3NfYmU3M2VjY2VlZmFkOThjNmE3ZTAzNDQ2MWI2ZTlmYWI=").decode("utf-8")
 SHOPIFY_API_KEY = os.environ.get("SHOPIFY_API_KEY", "563899564d55907061ba45b85b8425b9")
 SHOPIFY_API_SECRET = os.environ.get("SHOPIFY_API_SECRET", _FALLBACK_CLIENT_SECRET)
-SHOPIFY_APP_URL = os.environ.get("SHOPIFY_APP_URL", "https://sortflow-app.onrender.com")
+SHOPIFY_APP_URL = os.environ.get("SHOPIFY_APP_URL", "https://sortflow.cab2web.com")
 SHOPIFY_SCOPES = "read_products,write_products"
 DEMO_SHOP = "demo-store.myshopify.com"
 

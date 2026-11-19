@@ -2,7 +2,7 @@
 
 client_id = "563899564d55907061ba45b85b8425b9"
 name = "SortFlow Collection Sorter"
-application_url = "https://sortflow-app.onrender.com"
+application_url = "https://sortflow.cab2web.com"
 embedded = true
 
 [build]
@@ -15,7 +15,7 @@ scopes = "read_products,write_products"
 
 [auth]
 redirect_urls = [
-  "https://sortflow-app.onrender.com/auth/callback"
+  "https://sortflow.cab2web.com/auth/callback"
 ]
 
 [webhooks]
