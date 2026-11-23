@@ -389,6 +389,8 @@ async def index_page(
     id_token: Optional[str] = Query(default=None),
     code: Optional[str] = Query(default=None),
     billing: Optional[str] = Query(default=None),
+    plan_handle: Optional[str] = Query(default=None),
+    charge_id: Optional[str] = Query(default=None),
 ) -> Any:
     """Serves the Shopify Polaris Visual Collection Merchandiser UI with automatic Token Exchange."""
     clean_shop = (shop or "").strip().lower()
@@ -401,12 +403,17 @@ async def index_page(
                 pass
         if id_token:
             try:
-                await resolve_shop_session(clean_shop, request=request, id_token_param=id_token)
+                await resolve_shop_session(clean_shop, request=request, id_token_param=id_token, force_refresh=True)
             except Exception:
                 pass
-        if billing == "confirmed":
+        if billing == "confirmed" or (plan_handle and "pro" in plan_handle.lower()):
             try:
                 update_shop_plan(clean_shop, "pro")
+            except Exception:
+                pass
+        elif plan_handle and "free" in plan_handle.lower():
+            try:
+                update_shop_plan(clean_shop, "free")
             except Exception:
                 pass
     return FileResponse(STATIC_DIR / "index.html")
@@ -502,6 +509,7 @@ async def _exchange_oauth_code(shop: str, code: str) -> None:
                     "client_id": SHOPIFY_API_KEY,
                     "client_secret": SHOPIFY_API_SECRET,
                     "code": code,
+                    "expiring": 1,
                 },
             )
             resp.raise_for_status()
@@ -595,27 +603,61 @@ async def resolve_shop_session(
         return existing
 
     id_token = _extract_bearer_token(request, id_token_param)
-    if not id_token:
-        return existing if not force_refresh else None
-
     import httpx
 
     token_url = f"https://{clean_shop}/admin/oauth/access_token"
-    async with httpx.AsyncClient(timeout=15.0) as http_client:
-        for requested_type in (
-            "urn:shopify:params:oauth:token-type:offline-access-token",
-            "urn:shopify:params:oauth:token-type:online-access-token",
-        ):
-            try:
+    if id_token:
+        async with httpx.AsyncClient(timeout=15.0) as http_client:
+            for requested_type in (
+                "urn:shopify:params:oauth:token-type:offline-access-token",
+                "urn:shopify:params:oauth:token-type:online-access-token",
+            ):
+                try:
+                    resp = await http_client.post(
+                        token_url,
+                        json={
+                            "client_id": SHOPIFY_API_KEY,
+                            "client_secret": SHOPIFY_API_SECRET,
+                            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+                            "subject_token": id_token,
+                            "subject_token_type": "urn:ietf:params:oauth:token-type:id_token",
+                            "requested_token_type": requested_type,
+                            **({"expiring": 1} if requested_type.endswith("offline-access-token") else {}),
+                        },
+                        headers={"Content-Type": "application/json", "Accept": "application/json"},
+                    )
+                    if resp.status_code == 200:
+                        payload = resp.json()
+                        access_token = payload.get("access_token", "")
+                        if access_token:
+                            granted_scope = (payload.get("scope") or "").strip()
+                            if (
+                                existing
+                                and existing.get("access_token")
+                                and "read_products" in (existing.get("scope") or "")
+                                and granted_scope
+                                and "read_products" not in granted_scope
+                            ):
+                                return existing
+                            scope = granted_scope or SHOPIFY_SCOPES
+                            upsert_shop_session(shop_domain=clean_shop, access_token=access_token, scope=scope)
+                            return get_shop_session(clean_shop)
+                except Exception:
+                    continue
+
+    if force_refresh and existing and existing.get("access_token") and SHOPIFY_API_KEY and SHOPIFY_API_SECRET:
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as http_client:
                 resp = await http_client.post(
                     token_url,
                     json={
                         "client_id": SHOPIFY_API_KEY,
                         "client_secret": SHOPIFY_API_SECRET,
                         "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
-                        "subject_token": id_token,
-                        "subject_token_type": "urn:ietf:params:oauth:token-type:id_token",
-                        "requested_token_type": requested_type,
+                        "subject_token": existing["access_token"],
+                        "subject_token_type": "urn:shopify:params:oauth:token-type:offline-access-token",
+                        "requested_token_type": "urn:shopify:params:oauth:token-type:offline-access-token",
+                        "expiring": 1,
                     },
                     headers={"Content-Type": "application/json", "Accept": "application/json"},
                 )
@@ -623,20 +665,11 @@ async def resolve_shop_session(
                     payload = resp.json()
                     access_token = payload.get("access_token", "")
                     if access_token:
-                        granted_scope = (payload.get("scope") or "").strip()
-                        if (
-                            existing
-                            and existing.get("access_token")
-                            and "read_products" in (existing.get("scope") or "")
-                            and granted_scope
-                            and "read_products" not in granted_scope
-                        ):
-                            return existing
-                        scope = granted_scope or SHOPIFY_SCOPES
+                        scope = (payload.get("scope") or "").strip() or existing.get("scope") or SHOPIFY_SCOPES
                         upsert_shop_session(shop_domain=clean_shop, access_token=access_token, scope=scope)
                         return get_shop_session(clean_shop)
-            except Exception:
-                continue
+        except Exception:
+            pass
 
     return existing if not force_refresh else None
 
@@ -665,27 +698,43 @@ def _is_auth_error(exc: Exception) -> bool:
     return "401" in msg or "403" in msg or "unauthorized" in msg or "access denied" in msg
 
 
-async def _resolve_live_plan(shop: str, client: ShopifyGraphQLClient) -> Dict[str, Any]:
+async def _resolve_live_plan(
+    shop: str,
+    client: ShopifyGraphQLClient,
+    request: Optional[Request] = None,
+) -> Dict[str, Any]:
     """Queries Shopify currentAppInstallation.activeSubscriptions so plan state always reflects real Shopify billing."""
-    try:
-        info = await client.get_billing_info()
-        all_subs = info.get("active_subscriptions") or []
-        active_subs = [s for s in all_subs if str(s.get("status", "")).upper() == "ACTIVE"]
-        app_handle = info.get("app_handle") or ""
-        plan = "pro" if active_subs else "free"
-        update_shop_plan(shop, plan)
-        return {
-            "plan": plan,
-            "active_subscriptions": active_subs,
-            "app_handle": app_handle,
-        }
-    except Exception:
-        update_shop_plan(shop, "free")
-        return {
-            "plan": "free",
-            "active_subscriptions": [],
-            "app_handle": "",
-        }
+    active_client = client
+    last_err: Optional[Exception] = None
+    for attempt in range(2):
+        try:
+            info = await active_client.get_billing_info()
+            all_subs = info.get("active_subscriptions") or []
+            active_subs = [s for s in all_subs if str(s.get("status", "")).upper() == "ACTIVE"]
+            app_handle = info.get("app_handle") or ""
+            plan = "pro" if active_subs else "free"
+            update_shop_plan(shop, plan)
+            return {
+                "plan": plan,
+                "active_subscriptions": active_subs,
+                "app_handle": app_handle,
+            }
+        except Exception as exc:
+            last_err = exc
+            if attempt == 0:
+                refreshed = await resolve_shop_session(shop, request=request, force_refresh=True)
+                if refreshed and refreshed.get("access_token") and not str(refreshed["access_token"]).startswith("fake_"):
+                    active_client = ShopifyGraphQLClient(shop, refreshed["access_token"])
+                    continue
+            break
+    print(f"[billing] _resolve_live_plan fallback for {shop}: {last_err!r}")
+    existing = get_shop_session(shop) or {}
+    saved_plan = existing.get("plan") or "free"
+    return {
+        "plan": saved_plan,
+        "active_subscriptions": [],
+        "app_handle": "",
+    }
 
 
 @app.get("/api/collections")
@@ -744,7 +793,7 @@ async def api_list_collections(
     if collections is None:
         collections = []
 
-    billing_state = await _resolve_live_plan(shop, client)
+    billing_state = await _resolve_live_plan(shop, client, request=request)
 
     for col in collections:
         rule = get_collection_rule(shop, col["id"])
@@ -1284,7 +1333,7 @@ async def api_billing_status(
         }
 
     client = ShopifyGraphQLClient(shop, session["access_token"])
-    billing_state = await _resolve_live_plan(shop, client)
+    billing_state = await _resolve_live_plan(shop, client, request=request)
     return {
         "shop": shop,
         "plan": billing_state["plan"],
@@ -1326,7 +1375,7 @@ async def api_downgrade_subscription(
             except Exception:
                 cancelled_ids = []
 
-    billing_state = await _resolve_live_plan(shop, client)
+    billing_state = await _resolve_live_plan(shop, client, request=request)
     managed_url = _build_managed_pricing_url(shop, billing_state["app_handle"])
     if billing_state["plan"] == "pro" and not cancelled_ids and managed_url:
         return {
@@ -1414,7 +1463,7 @@ async def api_create_subscription(
 
     # For Managed Pricing apps, redirect merchant to Shopify's Hosted Pricing Page
     # so Shopify handles approval/decline/cancellation natively without faking active plan state.
-    billing_state = await _resolve_live_plan(shop, client)
+    billing_state = await _resolve_live_plan(shop, client, request=request)
     managed_url = _build_managed_pricing_url(shop, billing_state["app_handle"])
     err_msg = last_error or ("; ".join(str(e.get("message", "")) for e in user_errors) if user_errors else "")
     return {
